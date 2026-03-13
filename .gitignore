@@ -1,2 +1,10 @@
 .env
 .data
+.env
+.venv/
+chroma_db/
+LearnIQ_Content/
+__pycache__/
+*.pyc
+*.bin
+*.pickle
