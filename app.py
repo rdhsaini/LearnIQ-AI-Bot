@@ -13,7 +13,8 @@ from pathlib import Path
 import streamlit as st
 
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_community.vectorstores import Chroma
+from langchain_pinecone import PineconeVectorStore
+from pinecone import Pinecone
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_classic.chains import create_retrieval_chain
@@ -25,8 +26,9 @@ except ImportError:
     pass
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
-CHROMA_DIR     = "./chroma_db"
+PINECONE_INDEX = os.getenv("PINECONE_INDEX", "learniq")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "")
 
 # ── NCERT CLASS 8 CHAPTERS ────────────────────────────────────────────────────
 CHAPTERS = [
@@ -142,17 +144,22 @@ def build_practice_chain(vectorstore):
 
 
 @st.cache_resource(show_spinner=False)
-def load_all_chains(chroma_dir: str):
+def load_all_chains(_pinecone_index: str):
     embeddings  = get_embeddings()
-    vectorstore = Chroma(
-        persist_directory=chroma_dir,
-        embedding_function=embeddings,
+    vectorstore = PineconeVectorStore(
+        index_name=_pinecone_index,
+        embedding=embeddings,
     )
+    # Get approximate doc count
+    pc        = Pinecone(api_key=os.getenv("PINECONE_API_KEY", ""))
+    index     = pc.Index(_pinecone_index)
+    stats     = index.describe_index_stats()
+    doc_count = stats.get("total_vector_count", 0)
     return (
         build_qa_chain(vectorstore),
         build_lesson_chain(vectorstore),
         build_practice_chain(vectorstore),
-        vectorstore._collection.count(),
+        doc_count,
     )
 
 
@@ -430,7 +437,7 @@ def main():
 
     # ── Load chains ───────────────────────────────────────────────────────────
     with st.spinner("Loading knowledge base..."):
-        qa_chain, lesson_chain, practice_chain, doc_count = load_all_chains(CHROMA_DIR)
+        qa_chain, lesson_chain, practice_chain, doc_count = load_all_chains(PINECONE_INDEX)
 
     ch_idx   = st.session_state.active_chapter
     ch_info  = next(c for c in CHAPTERS if c["num"] == ch_idx)
