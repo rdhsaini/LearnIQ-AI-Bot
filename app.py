@@ -1,19 +1,12 @@
 """
 LearnIQ - CBSE Grade 8 Science AI Tutor
-3-Panel UI: Chapter Nav | Lesson+Practice | AI Tutor Chat
-Fun UI for 8th graders — streaks, XP, badges, emojis!
+Pure OpenAI + Pinecone — no langchain dependency
 """
 
 import os
-from pathlib import Path
 import streamlit as st
-
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from openai import OpenAI
 from pinecone import Pinecone
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.documents import Document
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
 
 try:
     from dotenv import load_dotenv
@@ -69,103 +62,105 @@ FUN_FACTS = {
 XP_PER_QUESTION = 10
 XP_PER_LEVEL    = 100
 
-# ── CHAINS ────────────────────────────────────────────────────────────────────
-def get_embeddings():
-    return OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_API_KEY)
+# ── RAG FUNCTIONS (pure OpenAI + Pinecone) ────────────────────────────────────
+@st.cache_resource(show_spinner=False)
+def init_clients():
+    oai = OpenAI(api_key=OPENAI_API_KEY)
+    pc  = Pinecone(api_key=PINECONE_API_KEY)
+    idx = pc.Index(PINECONE_INDEX)
+    stats = idx.describe_index_stats()
+    doc_count = stats.get("total_vector_count", 0)
+    return oai, idx, doc_count
 
-def pinecone_search(index, embeddings, query, k=5):
-    """Query Pinecone directly — no langchain-pinecone needed."""
-    vec = embeddings.embed_query(query)
-    results = index.query(vector=vec, top_k=k, include_metadata=True)
+
+def embed_query(oai, text):
+    resp = oai.embeddings.create(model="text-embedding-3-small", input=text)
+    return resp.data[0].embedding
+
+
+def search_pinecone(oai, idx, query, k=5):
+    vec  = embed_query(oai, query)
+    res  = idx.query(vector=vec, top_k=k, include_metadata=True)
     docs = []
-    for match in results.matches:
+    for match in res.matches:
         meta = match.metadata or {}
         page = int(meta.get("page", 0))
-        docs.append(Document(
-            page_content=meta.get("text", ""),
-            metadata={
-                "source": meta.get("source", ""),
-                "page": page,
-                "source_label": meta.get("source_label", f"Textbook · Page {page + 1}"),
-            }
-        ))
+        docs.append({
+            "text": meta.get("text", ""),
+            "source_label": meta.get("source_label", f"Textbook · Page {page + 1}"),
+        })
     return docs
 
 
-def build_qa_chain(index, embeddings):
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=OPENAI_API_KEY)
-    prompt = ChatPromptTemplate.from_template(
-        "You are LearnIQ, a fun and friendly AI tutor for CBSE Grade 8 Science students.\n\n"
-        "Use ONLY the context below. Keep answers short, clear and exciting for a 13-year-old.\n"
-        "Use emojis occasionally to make it fun! End with — Source: Page [number]\n\n"
-        "If not found: say \'Hmm, I couldn\'t find that in the textbook. Try rephrasing!\'\n\n"
-        "Context:\n{context}\n\nQuestion: {input}\n\nAnswer:"
+def ask_gpt(oai, system_prompt, user_prompt):
+    resp = oai.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_prompt},
+        ],
+        temperature=0,
     )
-    def chain(inputs):
-        docs = pinecone_search(index, embeddings, inputs["input"], k=5)
-        context = "\n\n".join(d.page_content for d in docs)
-        answer = llm.invoke(prompt.format_messages(context=context, input=inputs["input"])).content
-        return {"answer": answer, "context": docs}
-    return chain
+    return resp.choices[0].message.content
 
 
-def build_lesson_chain(index, embeddings):
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=OPENAI_API_KEY)
-    prompt = ChatPromptTemplate.from_template(
-        "You are a fun textbook summariser for CBSE Grade 8 Science.\n\n"
-        "Using ONLY the context below, write a clear lesson for a student. "
-        "Use short paragraphs. Bold key terms. Use emojis to make it engaging! "
-        "Keep it under 200 words. End with \'Source: Page X–Y\'.\n\n"
-        "Context:\n{context}\n\nTopic: {input}\n\nLesson summary:"
+def ask_gpt_creative(oai, system_prompt, user_prompt):
+    resp = oai.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_prompt},
+        ],
+        temperature=0.3,
     )
-    def chain(inputs):
-        docs = pinecone_search(index, embeddings, inputs["input"], k=6)
-        context = "\n\n".join(d.page_content for d in docs)
-        answer = llm.invoke(prompt.format_messages(context=context, input=inputs["input"])).content
-        return {"answer": answer, "context": docs}
-    return chain
+    return resp.choices[0].message.content
 
 
-def build_practice_chain(index, embeddings):
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3, openai_api_key=OPENAI_API_KEY)
-    prompt = ChatPromptTemplate.from_template(
-        "You are a CBSE Grade 8 Science teacher.\n\n"
-        "Using ONLY the context below, create ONE multiple-choice question.\n"
+def qa_answer(oai, idx, question):
+    docs    = search_pinecone(oai, idx, question, k=5)
+    context = "\n\n".join(d["text"] for d in docs)
+    system  = (
+        "You are LearnIQ, a fun and friendly AI tutor for CBSE Grade 8 Science students. "
+        "Use ONLY the context below. Keep answers short, clear and exciting for a 13-year-old. "
+        "Use emojis occasionally! End with — Source: Page [number]. "
+        "If not found say: Hmm, I couldn't find that in the textbook. Try rephrasing!"
+    )
+    answer = ask_gpt(oai, system, f"Context:\n{context}\n\nQuestion: {question}")
+    return answer, docs
+
+
+def lesson_answer(oai, idx, topic):
+    docs    = search_pinecone(oai, idx, topic, k=6)
+    context = "\n\n".join(d["text"] for d in docs)
+    system  = (
+        "You are a fun textbook summariser for CBSE Grade 8 Science. "
+        "Using ONLY the context, write a clear lesson for a student. "
+        "Use short paragraphs. Bold key terms. Use emojis! "
+        "Keep it under 200 words. End with Source: Page X-Y."
+    )
+    answer = ask_gpt(oai, system, f"Context:\n{context}\n\nTopic: {topic}")
+    return answer, docs
+
+
+def practice_answer(oai, idx, topic):
+    docs    = search_pinecone(oai, idx, topic, k=4)
+    context = "\n\n".join(d["text"] for d in docs)
+    system  = (
+        "You are a CBSE Grade 8 Science teacher. "
+        "Using ONLY the context, create ONE multiple-choice question. "
         "Format EXACTLY as:\n"
         "Q: [question]\nA) [option]\nB) [option]\nC) [option]\nD) [option]\n"
-        "Answer: [correct letter]\nExplanation: [one sentence from the textbook]\n\n"
-        "Context:\n{context}\n\nTopic: {input}\n\nQuestion:"
+        "Answer: [correct letter]\nExplanation: [one sentence]"
     )
-    def chain(inputs):
-        docs = pinecone_search(index, embeddings, inputs["input"], k=4)
-        context = "\n\n".join(d.page_content for d in docs)
-        answer = llm.invoke(prompt.format_messages(context=context, input=inputs["input"])).content
-        return {"answer": answer, "context": docs}
-    return chain
+    answer = ask_gpt_creative(oai, system, f"Context:\n{context}\n\nTopic: {topic}")
+    return answer, docs
 
-
-@st.cache_resource(show_spinner=False)
-def load_all_chains(_pinecone_index: str):
-    embeddings = get_embeddings()
-    pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY", ""))
-    index = pc.Index(_pinecone_index)
-    stats = index.describe_index_stats()
-    doc_count = stats.get("total_vector_count", 0)
-    return (
-        build_qa_chain(index, embeddings),
-        build_lesson_chain(index, embeddings),
-        build_practice_chain(index, embeddings),
-        doc_count,
-    )
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
-def make_source_pills(source_docs):
+def make_source_pills(docs):
     seen, pills = set(), []
-    for doc in source_docs:
-        label = doc.metadata.get("source_label", "")
-        if not label:
-            page  = doc.metadata.get("page", 0) + 1
-            label = f"Textbook · Page {page}"
+    for doc in docs:
+        label = doc.get("source_label", "") if isinstance(doc, dict) else doc.metadata.get("source_label", "")
         if label not in seen:
             seen.add(label)
             pills.append(
@@ -175,6 +170,7 @@ def make_source_pills(source_docs):
                 f'📄 {label}</span>'
             )
     return "".join(pills)
+
 
 def parse_mcq(raw):
     lines = [l.strip() for l in raw.strip().split("\n") if l.strip()]
@@ -190,8 +186,10 @@ def parse_mcq(raw):
             mcq["explanation"] = line.split(":", 1)[1].strip()
     return mcq
 
+
 def get_level(xp):
     return xp // XP_PER_LEVEL + 1
+
 
 def get_xp_progress(xp):
     return xp % XP_PER_LEVEL
@@ -491,7 +489,7 @@ def main():
         st.stop()
 
     with st.spinner("🚀 Loading LearnIQ..."):
-        qa_chain, lesson_chain, practice_chain, doc_count = load_all_chains(PINECONE_INDEX)
+        oai, idx, doc_count = init_clients()
 
     ch_idx   = st.session_state.active_chapter
     ch_info  = next(c for c in CHAPTERS if c["num"] == ch_idx)
@@ -612,9 +610,9 @@ def main():
             cache_key = f"lesson_{ch_idx}"
             if cache_key not in st.session_state.lesson_cache:
                 with st.spinner(f"✨ Loading lesson..."):
-                    result = lesson_chain.invoke({"input": ch_topic})
+                    text, docs = lesson_answer(oai, idx, ch_topic)
                     st.session_state.lesson_cache[cache_key] = {
-                        "text": result.get("answer", ""), "sources": result.get("context", [])
+                        "text": text, "sources": docs
                     }
             lesson = st.session_state.lesson_cache[cache_key]
             st.markdown(
@@ -672,10 +670,9 @@ def main():
             cache_key = f"practice_{ch_idx}"
             if cache_key not in st.session_state.practice_cache:
                 with st.spinner("🎯 Generating question..."):
-                    result = practice_chain.invoke({"input": ch_topic})
-                    raw    = result.get("answer", "")
+                    raw, docs = practice_answer(oai, idx, ch_topic)
                     st.session_state.practice_cache[cache_key] = {
-                        "raw": raw, "mcq": parse_mcq(raw), "sources": result.get("context", [])
+                        "raw": raw, "mcq": parse_mcq(raw), "sources": docs
                     }
             pdata   = st.session_state.practice_cache[cache_key]
             mcq     = pdata["mcq"]
@@ -735,10 +732,10 @@ def main():
                     q = f"Explain: {mcq.get('q','')}"
                     st.session_state.messages.append({"role": "user", "content": q})
                     with st.spinner("Searching..."):
-                        res = qa_chain.invoke({"input": q})
+                        ans, docs = qa_answer(oai, idx, q)
                     st.session_state.messages.append({
-                        "role": "assistant", "content": res.get("answer", ""),
-                        "badges": make_source_pills(res.get("context", [])),
+                        "role": "assistant", "content": ans,
+                        "badges": make_source_pills(docs),
                     })
                     st.session_state.q_count += 1
                     st.rerun()
@@ -749,9 +746,9 @@ def main():
             cache_key = f"summary_{ch_idx}"
             if cache_key not in st.session_state.lesson_cache:
                 with st.spinner("📋 Building summary..."):
-                    result = lesson_chain.invoke({"input": f"key points summary {ch_topic}"})
+                    text, docs = lesson_answer(oai, idx, f"key points summary {ch_topic}")
                     st.session_state.lesson_cache[cache_key] = {
-                        "text": result.get("answer", ""), "sources": result.get("context", [])
+                        "text": text, "sources": docs
                     }
             summary = st.session_state.lesson_cache[cache_key]
             st.markdown(
@@ -808,10 +805,10 @@ def main():
                 st.session_state.q_count += 1
                 st.session_state.xp += XP_PER_QUESTION
                 with st.spinner("🔍 Searching..."):
-                    res = qa_chain.invoke({"input": sq})
+                    ans, docs = qa_answer(oai, idx, sq)
                 st.session_state.messages.append({
-                    "role": "assistant", "content": res.get("answer", ""),
-                    "badges": make_source_pills(res.get("context", [])),
+                    "role": "assistant", "content": ans,
+                    "badges": make_source_pills(docs),
                 })
                 st.rerun()
 
@@ -843,10 +840,10 @@ def main():
                         "<div class='typing-dot'></div><div class='typing-dot'></div></div>",
                         unsafe_allow_html=True)
             with st.spinner("🔍 Searching textbook..."):
-                result = qa_chain.invoke({"input": question})
+                ans, docs = qa_answer(oai, idx, question)
             st.session_state.messages.append({
-                "role": "assistant", "content": result.get("answer", ""),
-                "badges": make_source_pills(result.get("context", [])),
+                "role": "assistant", "content": ans,
+                "badges": make_source_pills(docs),
             })
             st.rerun()
 
