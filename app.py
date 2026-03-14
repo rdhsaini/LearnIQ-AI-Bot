@@ -12,8 +12,8 @@ from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone
 from langchain_core.prompts import ChatPromptTemplate
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.chains import create_retrieval_chain
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.output_parsers import StrOutputParser
 
 try:
     from dotenv import load_dotenv
@@ -82,9 +82,13 @@ def build_qa_chain(vectorstore):
         "If not found: say 'Hmm, I couldn't find that in the textbook. Try rephrasing!'\n\n"
         "Context:\n{context}\n\nQuestion: {input}\n\nAnswer:"
     )
-    combine_docs_chain = create_stuff_documents_chain(llm, prompt)
     retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 5})
-    return create_retrieval_chain(retriever, combine_docs_chain)
+    def chain(inputs):
+        docs = retriever.invoke(inputs["input"])
+        context = "\n\n".join(d.page_content for d in docs)
+        answer = llm.invoke(prompt.format_messages(context=context, input=inputs["input"])).content
+        return {"answer": answer, "context": docs}
+    return chain
 
 def build_lesson_chain(vectorstore):
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=OPENAI_API_KEY)
@@ -95,9 +99,13 @@ def build_lesson_chain(vectorstore):
         "Keep it under 200 words. End with 'Source: Page X–Y'.\n\n"
         "Context:\n{context}\n\nTopic: {input}\n\nLesson summary:"
     )
-    combine_docs_chain = create_stuff_documents_chain(llm, prompt)
     retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 6})
-    return create_retrieval_chain(retriever, combine_docs_chain)
+    def chain(inputs):
+        docs = retriever.invoke(inputs["input"])
+        context = "\n\n".join(d.page_content for d in docs)
+        answer = llm.invoke(prompt.format_messages(context=context, input=inputs["input"])).content
+        return {"answer": answer, "context": docs}
+    return chain
 
 def build_practice_chain(vectorstore):
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3, openai_api_key=OPENAI_API_KEY)
@@ -109,9 +117,13 @@ def build_practice_chain(vectorstore):
         "Answer: [correct letter]\nExplanation: [one sentence from the textbook]\n\n"
         "Context:\n{context}\n\nTopic: {input}\n\nQuestion:"
     )
-    combine_docs_chain = create_stuff_documents_chain(llm, prompt)
     retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 4})
-    return create_retrieval_chain(retriever, combine_docs_chain)
+    def chain(inputs):
+        docs = retriever.invoke(inputs["input"])
+        context = "\n\n".join(d.page_content for d in docs)
+        answer = llm.invoke(prompt.format_messages(context=context, input=inputs["input"])).content
+        return {"answer": answer, "context": docs}
+    return chain
 
 @st.cache_resource(show_spinner=False)
 def load_all_chains(_pinecone_index: str):
