@@ -163,7 +163,7 @@ def make_source_pills(source_docs: list) -> str:
         if label not in seen:
             seen.add(label)
             pills.append(
-                f'<span style="background:#312e81;color:#a5b4fc;'
+                f'<span style="background:#c4b5fd;color:#a5b4fc;'
                 f'padding:3px 10px;border-radius:20px;font-size:0.7rem;'
                 f'margin-right:5px;display:inline-block;margin-top:4px;">'
                 f'📄 {label}</span>'
@@ -187,14 +187,14 @@ def parse_mcq(raw: str):
     return mcq
 
 
-# ── CSS — Slate + Indigo palette ─────────────────────────────────────────────
+# ── CSS — Khanmigo Lavender/Purple Palette ─────────────────────────────────────────────
 # Background:  #0f1117  (deep navy-slate)
-# Surface:     #1a1d2e  (elevated panels)
-# Border:      #252840  (subtle dividers)
-# Accent:      #4f46e5  (indigo — buttons, active states)
-# Accent soft: #818cf8  (indigo-300 — hover, highlights)
-# Text pri:    #e2e8f0  (near white)
-# Text sec:    #8892a4  (muted slate)
+# Surface:     #ffffff  (elevated panels)
+# Border:      #d8ccf0  (subtle dividers)
+# Accent:      #7c3aed  (indigo — buttons, active states)
+# Accent soft: #a78bfa  (indigo-300 — hover, highlights)
+# Text pri:    #3b1a8a  (near white)
+# Text sec:    #6b4fa8  (muted slate)
 # Text muted:  #4a5568  (very muted)
 # Success:     #10b981  (emerald)
 # Error:       #ef4444  (red)
@@ -202,12 +202,12 @@ def apply_css():
     st.markdown("""
     <style>
         /* ── Global ── */
-        .stApp { background:#0f1117 !important; }
+        .stApp { background:#faf8ff !important; }
         .block-container { padding: 0 !important; max-width: 100% !important; }
-        header[data-testid="stHeader"] { background:#0f1117 !important; }
+        header[data-testid="stHeader"] { background:#faf8ff !important; }
         section[data-testid="stSidebar"] {
-            background:#0f1117 !important;
-            border-right: 1px solid #252840 !important;
+            background:#faf8ff !important;
+            border-right: 1px solid #d8ccf0 !important;
         }
 
         /* ── Sidebar chapter list ── */
@@ -216,20 +216,20 @@ def apply_css():
             padding: 8px 12px; border-radius: 8px; cursor: pointer;
             margin-bottom: 2px; transition: background 0.15s;
         }
-        .ch-item:hover { background: #1a1d2e; }
+        .ch-item:hover { background: #ffffff; }
         .ch-active {
-            background: #1e1b4b !important;
-            border-left: 3px solid #4f46e5;
+            background: #ede9fe !important;
+            border-left: 3px solid #7c3aed;
         }
         .ch-num {
             min-width: 24px; height: 24px; border-radius: 50%;
-            background: #252840; color: #8892a4;
+            background: #d8ccf0; color: #6b4fa8;
             font-size: 11px; font-weight: 600;
             display: flex; align-items: center; justify-content: center;
         }
-        .ch-num-active { background: #4f46e5 !important; color: white !important; }
-        .ch-label { font-size: 12px; color: #8892a4; line-height: 1.3; }
-        .ch-label-active { color: #e2e8f0 !important; font-weight: 500; }
+        .ch-num-active { background: #7c3aed !important; color: white !important; }
+        .ch-label { font-size: 12px; color: #6b4fa8; line-height: 1.3; }
+        .ch-label-active { color: #3b1a8a !important; font-weight: 500; }
         .ch-done {
             width: 8px; height: 8px; border-radius: 50%;
             background: #10b981; margin-left: auto; flex-shrink: 0;
@@ -237,46 +237,46 @@ def apply_css():
 
         /* ── Progress bar ── */
         .prog-track {
-            height: 4px; background: #252840;
+            height: 4px; background: #d8ccf0;
             border-radius: 2px; margin: 8px 0 4px;
         }
         .prog-fill {
-            height: 4px; background: #4f46e5;
+            height: 4px; background: #7c3aed;
             border-radius: 2px; transition: width 0.3s;
         }
 
         /* ── Center panel ── */
         .panel-card {
-            background: #1a1d2e; border: 1px solid #252840;
+            background: #ffffff; border: 1px solid #d8ccf0;
             border-radius: 12px; padding: 20px 24px; margin-bottom: 16px;
         }
         .chapter-hero {
-            background: #1e1b4b;
-            border: 1px solid #312e81; border-radius: 12px;
+            background: #ede9fe;
+            border: 1px solid #c4b5fd; border-radius: 12px;
             padding: 20px 24px; margin-bottom: 16px;
         }
         .lesson-text {
-            color: #c7d2fe; font-size: 0.92rem;
+            color: #3b1a8a; font-size: 0.92rem;
             line-height: 1.8; white-space: pre-wrap;
         }
-        .lesson-text b, .lesson-text strong { color: #e2e8f0; }
+        .lesson-text b, .lesson-text strong { color: #3b1a8a; }
 
         /* ── Tab bar ── */
         .tab-bar {
             display: flex; gap: 4px; margin-bottom: 16px;
-            border-bottom: 1px solid #252840; padding-bottom: 0;
+            border-bottom: 1px solid #d8ccf0; padding-bottom: 0;
         }
         .tab-btn {
             padding: 8px 18px; border-radius: 8px 8px 0 0;
             border: none; background: transparent;
-            color: #8892a4; font-size: 13px; cursor: pointer;
+            color: #6b4fa8; font-size: 13px; cursor: pointer;
             border-bottom: 2px solid transparent;
             font-family: sans-serif; transition: all 0.15s;
         }
-        .tab-btn:hover { color: #e2e8f0; }
+        .tab-btn:hover { color: #3b1a8a; }
         .tab-btn-active {
-            color: #818cf8 !important;
-            border-bottom-color: #4f46e5 !important;
+            color: #a78bfa !important;
+            border-bottom-color: #7c3aed !important;
             font-weight: 600;
         }
 
@@ -285,32 +285,32 @@ def apply_css():
             display: flex; flex-direction: column; gap: 10px; padding: 10px 0;
         }
         .bubble-user {
-            background: #4f46e5; color: #e0e7ff;
+            background: #7c3aed; color: white;
             border-radius: 16px 16px 4px 16px;
             padding: 10px 14px; margin-left: auto;
             max-width: 90%; font-size: 0.85rem; line-height: 1.5;
         }
         .bubble-bot {
-            background: #1a1d2e; border: 1px solid #252840;
-            color: #c7d2fe; border-radius: 16px 16px 16px 4px;
+            background: #ffffff; border: 1px solid #d8ccf0;
+            color: #3b1a8a; border-radius: 16px 16px 16px 4px;
             padding: 10px 14px; max-width: 95%;
             font-size: 0.85rem; line-height: 1.6;
         }
         .badge-row {
             margin-top: 8px; padding-top: 6px;
-            border-top: 1px solid #252840;
+            border-top: 1px solid #d8ccf0;
         }
 
         /* ── MCQ options ── */
         .mcq-option {
             display: flex; align-items: center; gap: 10px;
-            padding: 9px 12px; border: 1px solid #252840;
+            padding: 9px 12px; border: 1px solid #d8ccf0;
             border-radius: 8px; margin-bottom: 6px;
-            cursor: pointer; font-size: 13px; color: #8892a4;
-            transition: all 0.15s; background: #0f1117;
+            cursor: pointer; font-size: 13px; color: #6b4fa8;
+            transition: all 0.15s; background:#faf8ff;
         }
         .mcq-option:hover {
-            border-color: #4f46e5; color: #e2e8f0; background: #1e1b4b;
+            border-color: #7c3aed; color: #3b1a8a; background: #ede9fe;
         }
         .mcq-correct {
             border-color: #10b981 !important;
@@ -324,12 +324,12 @@ def apply_css():
         /* ── Tutor panel header ── */
         .tutor-header {
             display: flex; align-items: center; gap: 10px;
-            padding: 12px 0 10px; border-bottom: 1px solid #252840;
+            padding: 12px 0 10px; border-bottom: 1px solid #d8ccf0;
             margin-bottom: 10px;
         }
         .tutor-avatar {
             width: 32px; height: 32px; border-radius: 50%;
-            background: #4f46e5; color: #e0e7ff;
+            background: #7c3aed; color: white;
             display: flex; align-items: center; justify-content: center;
             font-size: 13px; font-weight: 600; flex-shrink: 0;
         }
@@ -338,24 +338,24 @@ def apply_css():
         .suggest-row { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 10px; }
         .suggest-pill {
             font-size: 11px; padding: 4px 10px;
-            border: 1px solid #252840; border-radius: 20px;
-            color: #8892a4; cursor: pointer; background: transparent;
+            border: 1px solid #d8ccf0; border-radius: 20px;
+            color: #6b4fa8; cursor: pointer; background: transparent;
             font-family: sans-serif; transition: all 0.15s;
         }
-        .suggest-pill:hover { border-color: #818cf8; color: #818cf8; }
+        .suggest-pill:hover { border-color: #a78bfa; color: #a78bfa; }
 
         /* ── Inputs ── */
         .stTextInput input {
-            background: #1a1d2e !important; border: 1px solid #252840 !important;
-            color: #e2e8f0 !important; border-radius: 10px !important;
+            background: #ffffff !important; border: 1px solid #d8ccf0 !important;
+            color: #3b1a8a !important; border-radius: 10px !important;
             font-size: 0.85rem !important;
         }
         .stTextInput input:focus {
-            border-color: #4f46e5 !important;
-            box-shadow: 0 0 0 2px #312e8140 !important;
+            border-color: #7c3aed !important;
+            box-shadow: 0 0 0 2px #c4b5fd40 !important;
         }
         .stFormSubmitButton button {
-            background: #4f46e5 !important; color: #e0e7ff !important;
+            background: #7c3aed !important; color: white !important;
             border-radius: 10px !important; font-weight: 600 !important;
             border: none !important; transition: background 0.15s !important;
         }
@@ -363,18 +363,18 @@ def apply_css():
             background: #4338ca !important;
         }
         div[data-testid="stButton"] button {
-            background: transparent !important; border: 1px solid #252840 !important;
-            color: #8892a4 !important; border-radius: 8px !important;
+            background: transparent !important; border: 1px solid #d8ccf0 !important;
+            color: #6b4fa8 !important; border-radius: 8px !important;
             font-size: 12px !important; transition: all 0.15s !important;
         }
         div[data-testid="stButton"] button:hover {
-            border-color: #4f46e5 !important; color: #818cf8 !important;
-            background: #1e1b4b !important;
+            border-color: #7c3aed !important; color: #a78bfa !important;
+            background: #ede9fe !important;
         }
 
         /* ── Metrics ── */
-        [data-testid="stMetricValue"] { color: #818cf8 !important; font-size: 1.2rem !important; }
-        [data-testid="stMetricLabel"] { color: #8892a4 !important; font-size: 0.75rem !important; }
+        [data-testid="stMetricValue"] { color: #a78bfa !important; font-size: 1.2rem !important; }
+        [data-testid="stMetricLabel"] { color: #6b4fa8 !important; font-size: 0.75rem !important; }
 
         /* ── Alerts / success / error ── */
         div[data-testid="stAlert"] { border-radius: 10px !important; }
@@ -384,7 +384,7 @@ def apply_css():
                      border: 1px solid #ef4444 !important; }
 
         /* ── Spinner ── */
-        .stSpinner > div { border-top-color: #4f46e5 !important; }
+        .stSpinner > div { border-top-color: #7c3aed !important; }
 
         /* ── Hide Streamlit chrome ── */
         #MainMenu, footer, .stDeployButton { display: none !important; }
@@ -439,7 +439,7 @@ def main():
     with st.sidebar:
         st.markdown(
             "<div style='padding:14px 0 6px'>"
-            "<span style='font-size:18px;font-weight:600;color:#e2e8f0'>🧪 LearnIQ</span><br>"
+            "<span style='font-size:18px;font-weight:600;color:#3b1a8a'>🧪 LearnIQ</span><br>"
             "<span style='font-size:11px;color:#8b949e'>CBSE · Grade 8 · Science</span>"
             "</div>",
             unsafe_allow_html=True,
@@ -501,7 +501,7 @@ def main():
             f"<div class='chapter-hero'>"
             f"<div style='font-size:11px;color:#8b949e;margin-bottom:4px'>"
             f"Chapter {ch_info['num']}</div>"
-            f"<div style='font-size:18px;font-weight:600;color:#e2e8f0;margin-bottom:4px'>"
+            f"<div style='font-size:18px;font-weight:600;color:#3b1a8a;margin-bottom:4px'>"
             f"{ch_info['title']}</div>"
             f"<div style='font-size:11px;color:#8b949e'>"
             f"NCERT Class 8 Science</div>"
@@ -573,7 +573,7 @@ def main():
                 f"<div class='panel-card'>"
                 f"<div style='font-size:11px;color:#8b949e;margin-bottom:10px'>"
                 f"PRACTICE QUESTION</div>"
-                f"<div style='font-size:14px;color:#e2e8f0;font-weight:500;"
+                f"<div style='font-size:14px;color:#3b1a8a;font-weight:500;"
                 f"margin-bottom:14px;line-height:1.5'>{mcq.get('q','')}</div>",
                 unsafe_allow_html=True,
             )
@@ -669,7 +669,7 @@ def main():
             "<div class='tutor-header'>"
             "<div class='tutor-avatar'>AI</div>"
             "<div>"
-            "<div style='font-size:13px;font-weight:600;color:#e2e8f0'>LearnIQ Tutor</div>"
+            "<div style='font-size:13px;font-weight:600;color:#3b1a8a'>LearnIQ Tutor</div>"
             "<div style='font-size:10px;color:#16a34a;display:flex;align-items:center;gap:4px'>"
             "<span style='width:6px;height:6px;border-radius:50%;"
             "background:#16a34a;display:inline-block'></span>Online</div>"
