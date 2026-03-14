@@ -12,9 +12,6 @@ from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
-
 try:
     from dotenv import load_dotenv
     load_dotenv()
