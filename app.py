@@ -11,10 +11,10 @@ RUN ORDER:
 import os
 from pathlib import Path
 import streamlit as st
+from streamlit_chat import message   # pip install streamlit-chat
 
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_pinecone import PineconeVectorStore
-from pinecone import Pinecone
+from langchain_community.vectorstores import Chroma
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_classic.chains import create_retrieval_chain
@@ -26,9 +26,8 @@ except ImportError:
     pass
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
-PINECONE_INDEX = os.getenv("PINECONE_INDEX", "learniq")
+CHROMA_DIR     = "./chroma_db"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "")
 
 # ── NCERT CLASS 8 CHAPTERS ────────────────────────────────────────────────────
 CHAPTERS = [
@@ -144,22 +143,17 @@ def build_practice_chain(vectorstore):
 
 
 @st.cache_resource(show_spinner=False)
-def load_all_chains(_pinecone_index: str):
+def load_all_chains(chroma_dir: str):
     embeddings  = get_embeddings()
-    vectorstore = PineconeVectorStore(
-        index_name=_pinecone_index,
-        embedding=embeddings,
+    vectorstore = Chroma(
+        persist_directory=chroma_dir,
+        embedding_function=embeddings,
     )
-    # Get approximate doc count
-    pc        = Pinecone(api_key=os.getenv("PINECONE_API_KEY", ""))
-    index     = pc.Index(_pinecone_index)
-    stats     = index.describe_index_stats()
-    doc_count = stats.get("total_vector_count", 0)
     return (
         build_qa_chain(vectorstore),
         build_lesson_chain(vectorstore),
         build_practice_chain(vectorstore),
-        doc_count,
+        vectorstore._collection.count(),
     )
 
 
@@ -174,7 +168,7 @@ def make_source_pills(source_docs: list) -> str:
         if label not in seen:
             seen.add(label)
             pills.append(
-                f'<span style="background:#ede9fe;color:#5b21b6;'
+                f'<span style="background:#312e81;color:#a5b4fc;'
                 f'padding:3px 10px;border-radius:20px;font-size:0.7rem;'
                 f'margin-right:5px;display:inline-block;margin-top:4px;">'
                 f'📄 {label}</span>'
@@ -198,31 +192,27 @@ def parse_mcq(raw: str):
     return mcq
 
 
-# ── CSS — Khanmigo Lavender/Purple Palette ──────────────────────────────────
-# Page bg:     #faf8ff  soft lavender-white
-# Sidebar bg:  #f0ebff  light lavender
-# Surface:     #ede9fe  lavender panels
-# Card:        #ffffff  white
-# Border:      #d8ccf0  soft purple border
-# Primary:     #7c3aed  vivid purple
-# Primary deep:#3b1a8a  deep purple (headings)
-# Primary mid: #6b4fa8  mid purple (body text)
-# Primary muted:#8b72bf muted purple (hints)
-# Success:     #10b981  emerald green
-# Error:       #ef4444
+# ── CSS — Slate + Indigo palette ─────────────────────────────────────────────
+# Background:  #0f1117  (deep navy-slate)
+# Surface:     #1a1d2e  (elevated panels)
+# Border:      #252840  (subtle dividers)
+# Accent:      #4f46e5  (indigo — buttons, active states)
+# Accent soft: #818cf8  (indigo-300 — hover, highlights)
+# Text pri:    #e2e8f0  (near white)
+# Text sec:    #8892a4  (muted slate)
+# Text muted:  #4a5568  (very muted)
+# Success:     #10b981  (emerald)
+# Error:       #ef4444  (red)
 def apply_css():
     st.markdown("""
     <style>
         /* ── Global ── */
-        .stApp { background:#faf8ff !important; }
+        .stApp { background:#0f1117 !important; }
         .block-container { padding: 0 !important; max-width: 100% !important; }
-        header[data-testid="stHeader"] {
-            background:#faf8ff !important;
-            border-bottom: 1px solid #d8ccf0 !important;
-        }
+        header[data-testid="stHeader"] { background:#0f1117 !important; }
         section[data-testid="stSidebar"] {
-            background:#f0ebff !important;
-            border-right: 1px solid #d8ccf0 !important;
+            background:#0f1117 !important;
+            border-right: 1px solid #252840 !important;
         }
 
         /* ── Sidebar chapter list ── */
@@ -231,20 +221,20 @@ def apply_css():
             padding: 8px 12px; border-radius: 8px; cursor: pointer;
             margin-bottom: 2px; transition: background 0.15s;
         }
-        .ch-item:hover { background: #e0d4f8; }
+        .ch-item:hover { background: #1a1d2e; }
         .ch-active {
-            background: #e0d4f8 !important;
-            border-left: 3px solid #7c3aed;
+            background: #1e1b4b !important;
+            border-left: 3px solid #4f46e5;
         }
         .ch-num {
             min-width: 24px; height: 24px; border-radius: 50%;
-            background: #d8ccf0; color: #6b4fa8;
-            font-size: 11px; font-weight: 700;
+            background: #252840; color: #8892a4;
+            font-size: 11px; font-weight: 600;
             display: flex; align-items: center; justify-content: center;
         }
-        .ch-num-active { background: #7c3aed !important; color: white !important; }
-        .ch-label { font-size: 12px; color: #6b4fa8; line-height: 1.3; }
-        .ch-label-active { color: #3b1a8a !important; font-weight: 600; }
+        .ch-num-active { background: #4f46e5 !important; color: white !important; }
+        .ch-label { font-size: 12px; color: #8892a4; line-height: 1.3; }
+        .ch-label-active { color: #e2e8f0 !important; font-weight: 500; }
         .ch-done {
             width: 8px; height: 8px; border-radius: 50%;
             background: #10b981; margin-left: auto; flex-shrink: 0;
@@ -252,149 +242,154 @@ def apply_css():
 
         /* ── Progress bar ── */
         .prog-track {
-            height: 5px; background: #d8ccf0;
-            border-radius: 3px; margin: 8px 0 4px;
+            height: 4px; background: #252840;
+            border-radius: 2px; margin: 8px 0 4px;
         }
         .prog-fill {
-            height: 5px; background: #7c3aed;
-            border-radius: 3px; transition: width 0.4s;
+            height: 4px; background: #4f46e5;
+            border-radius: 2px; transition: width 0.3s;
         }
 
-        /* ── Cards ── */
+        /* ── Center panel ── */
         .panel-card {
-            background: #ffffff; border: 1px solid #e0d4f8;
-            border-radius: 14px; padding: 22px 26px; margin-bottom: 16px;
-            box-shadow: 0 1px 4px rgba(124,58,237,0.07);
+            background: #1a1d2e; border: 1px solid #252840;
+            border-radius: 12px; padding: 20px 24px; margin-bottom: 16px;
         }
         .chapter-hero {
-            background: linear-gradient(120deg, #ede9fe 0%, #f5f3ff 100%);
-            border: 1px solid #d8ccf0; border-radius: 14px;
-            padding: 22px 26px; margin-bottom: 16px;
+            background: #1e1b4b;
+            border: 1px solid #312e81; border-radius: 12px;
+            padding: 20px 24px; margin-bottom: 16px;
         }
         .lesson-text {
-            color: #3b1a8a; font-size: 0.93rem;
-            line-height: 1.85; white-space: pre-wrap;
+            color: #c7d2fe; font-size: 0.92rem;
+            line-height: 1.8; white-space: pre-wrap;
         }
-        .lesson-text b, .lesson-text strong { color: #2e1065; }
+        .lesson-text b, .lesson-text strong { color: #e2e8f0; }
 
-        /* ── Tab buttons ── */
+        /* ── Tab bar ── */
+        .tab-bar {
+            display: flex; gap: 4px; margin-bottom: 16px;
+            border-bottom: 1px solid #252840; padding-bottom: 0;
+        }
         .tab-btn {
             padding: 8px 18px; border-radius: 8px 8px 0 0;
             border: none; background: transparent;
-            color: #8b72bf; font-size: 13px; cursor: pointer;
+            color: #8892a4; font-size: 13px; cursor: pointer;
             border-bottom: 2px solid transparent;
             font-family: sans-serif; transition: all 0.15s;
         }
-        .tab-btn:hover { color: #3b1a8a; }
+        .tab-btn:hover { color: #e2e8f0; }
         .tab-btn-active {
-            color: #7c3aed !important;
-            border-bottom-color: #7c3aed !important;
-            font-weight: 700;
+            color: #818cf8 !important;
+            border-bottom-color: #4f46e5 !important;
+            font-weight: 600;
         }
 
         /* ── Chat bubbles ── */
-        .chat-wrap { display: flex; flex-direction: column; gap: 10px; padding: 10px 0; }
+        .chat-wrap {
+            display: flex; flex-direction: column; gap: 10px; padding: 10px 0;
+        }
         .bubble-user {
-            background: #7c3aed; color: white;
+            background: #4f46e5; color: #e0e7ff;
             border-radius: 16px 16px 4px 16px;
             padding: 10px 14px; margin-left: auto;
             max-width: 90%; font-size: 0.85rem; line-height: 1.5;
         }
         .bubble-bot {
-            background: #ffffff; border: 1px solid #d8ccf0;
-            color: #3b1a8a; border-radius: 16px 16px 16px 4px;
+            background: #1a1d2e; border: 1px solid #252840;
+            color: #c7d2fe; border-radius: 16px 16px 16px 4px;
             padding: 10px 14px; max-width: 95%;
             font-size: 0.85rem; line-height: 1.6;
         }
         .badge-row {
             margin-top: 8px; padding-top: 6px;
-            border-top: 1px solid #e0d4f8;
+            border-top: 1px solid #252840;
         }
 
         /* ── MCQ options ── */
         .mcq-option {
             display: flex; align-items: center; gap: 10px;
-            padding: 10px 14px; border: 1.5px solid #d8ccf0;
-            border-radius: 10px; margin-bottom: 8px;
-            cursor: pointer; font-size: 13px; color: #6b4fa8;
-            transition: all 0.15s; background: #ffffff;
+            padding: 9px 12px; border: 1px solid #252840;
+            border-radius: 8px; margin-bottom: 6px;
+            cursor: pointer; font-size: 13px; color: #8892a4;
+            transition: all 0.15s; background: #0f1117;
         }
         .mcq-option:hover {
-            border-color: #7c3aed; color: #3b1a8a; background: #f0ebff;
+            border-color: #4f46e5; color: #e2e8f0; background: #1e1b4b;
         }
         .mcq-correct {
             border-color: #10b981 !important;
-            background: #ecfdf5 !important; color: #065f46 !important;
+            background: #064e3b !important; color: #6ee7b7 !important;
         }
         .mcq-wrong {
             border-color: #ef4444 !important;
-            background: #fef2f2 !important; color: #991b1b !important;
+            background: #450a0a !important; color: #fca5a5 !important;
         }
 
-        /* ── Tutor header ── */
+        /* ── Tutor panel header ── */
         .tutor-header {
             display: flex; align-items: center; gap: 10px;
-            padding: 12px 0 10px; border-bottom: 1px solid #d8ccf0;
+            padding: 12px 0 10px; border-bottom: 1px solid #252840;
             margin-bottom: 10px;
         }
         .tutor-avatar {
-            width: 34px; height: 34px; border-radius: 50%;
-            background: #7c3aed; color: white;
+            width: 32px; height: 32px; border-radius: 50%;
+            background: #4f46e5; color: #e0e7ff;
             display: flex; align-items: center; justify-content: center;
-            font-size: 13px; font-weight: 800; flex-shrink: 0;
+            font-size: 13px; font-weight: 600; flex-shrink: 0;
         }
 
         /* ── Suggest pills ── */
+        .suggest-row { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 10px; }
         .suggest-pill {
-            font-size: 11px; padding: 4px 11px;
-            border: 1.5px solid #c4a8f0; border-radius: 20px;
-            color: #6b2fa8; cursor: pointer; background: white;
+            font-size: 11px; padding: 4px 10px;
+            border: 1px solid #252840; border-radius: 20px;
+            color: #8892a4; cursor: pointer; background: transparent;
             font-family: sans-serif; transition: all 0.15s;
         }
-        .suggest-pill:hover {
-            background: #7c3aed; color: white; border-color: #7c3aed;
-        }
+        .suggest-pill:hover { border-color: #818cf8; color: #818cf8; }
 
         /* ── Inputs ── */
         .stTextInput input {
-            background: white !important; border: 1.5px solid #d8ccf0 !important;
-            color: #3b1a8a !important; border-radius: 10px !important;
-            font-size: 0.87rem !important;
+            background: #1a1d2e !important; border: 1px solid #252840 !important;
+            color: #e2e8f0 !important; border-radius: 10px !important;
+            font-size: 0.85rem !important;
         }
         .stTextInput input:focus {
-            border-color: #7c3aed !important;
-            box-shadow: 0 0 0 3px rgba(124,58,237,0.12) !important;
+            border-color: #4f46e5 !important;
+            box-shadow: 0 0 0 2px #312e8140 !important;
         }
         .stFormSubmitButton button {
-            background: #7c3aed !important; color: white !important;
-            border-radius: 10px !important; font-weight: 700 !important;
-            border: none !important;
+            background: #4f46e5 !important; color: #e0e7ff !important;
+            border-radius: 10px !important; font-weight: 600 !important;
+            border: none !important; transition: background 0.15s !important;
         }
-        .stFormSubmitButton button:hover { background: #6d28d9 !important; }
+        .stFormSubmitButton button:hover {
+            background: #4338ca !important;
+        }
         div[data-testid="stButton"] button {
-            background: white !important; border: 1.5px solid #d8ccf0 !important;
-            color: #6b4fa8 !important; border-radius: 8px !important;
+            background: transparent !important; border: 1px solid #252840 !important;
+            color: #8892a4 !important; border-radius: 8px !important;
             font-size: 12px !important; transition: all 0.15s !important;
         }
         div[data-testid="stButton"] button:hover {
-            border-color: #7c3aed !important; color: #7c3aed !important;
-            background: #f0ebff !important;
+            border-color: #4f46e5 !important; color: #818cf8 !important;
+            background: #1e1b4b !important;
         }
 
         /* ── Metrics ── */
-        [data-testid="stMetricValue"] { color: #7c3aed !important; font-size: 1.3rem !important; font-weight: 800 !important; }
-        [data-testid="stMetricLabel"] { color: #8b72bf !important; font-size: 0.75rem !important; }
+        [data-testid="stMetricValue"] { color: #818cf8 !important; font-size: 1.2rem !important; }
+        [data-testid="stMetricLabel"] { color: #8892a4 !important; font-size: 0.75rem !important; }
 
-        /* ── Alerts ── */
+        /* ── Alerts / success / error ── */
         div[data-testid="stAlert"] { border-radius: 10px !important; }
-        .stSuccess { background: #ecfdf5 !important; color: #065f46 !important; border: 1px solid #10b981 !important; }
-        .stError   { background: #fef2f2 !important; color: #991b1b !important; border: 1px solid #ef4444 !important; }
+        .stSuccess { background: #064e3b !important; color: #6ee7b7 !important;
+                     border: 1px solid #10b981 !important; }
+        .stError   { background: #450a0a !important; color: #fca5a5 !important;
+                     border: 1px solid #ef4444 !important; }
 
         /* ── Spinner ── */
-        .stSpinner > div { border-top-color: #7c3aed !important; }
-
-        /* ── Dividers ── */
-        hr { border-color: #d8ccf0 !important; }
+        .stSpinner > div { border-top-color: #4f46e5 !important; }
 
         /* ── Hide Streamlit chrome ── */
         #MainMenu, footer, .stDeployButton { display: none !important; }
@@ -431,13 +426,13 @@ def main():
     if not OPENAI_API_KEY:
         st.error("**OPENAI_API_KEY not set.** Add to `.env`: `OPENAI_API_KEY=sk-...`")
         st.stop()
-    if not PINECONE_API_KEY:
-        st.error("**PINECONE_API_KEY not set.** Add to Streamlit Secrets: `PINECONE_API_KEY=your-key`")
+    if not Path(CHROMA_DIR).exists() or not any(Path(CHROMA_DIR).iterdir()):
+        st.error("**Run `python ingest.py` first** to build the knowledge base.")
         st.stop()
 
     # ── Load chains ───────────────────────────────────────────────────────────
     with st.spinner("Loading knowledge base..."):
-        qa_chain, lesson_chain, practice_chain, doc_count = load_all_chains(PINECONE_INDEX)
+        qa_chain, lesson_chain, practice_chain, doc_count = load_all_chains(CHROMA_DIR)
 
     ch_idx   = st.session_state.active_chapter
     ch_info  = next(c for c in CHAPTERS if c["num"] == ch_idx)
@@ -448,9 +443,9 @@ def main():
     # ══════════════════════════════════════════════════════════════════════════
     with st.sidebar:
         st.markdown(
-            "<div style='padding:16px 0 10px'>"
-            "<span style='font-size:28px;font-weight:800;color:#7c3aed;letter-spacing:-0.5px'>🧪 LearnIQ</span><br>"
-            "<span style='font-size:11px;color:#8b72bf;font-weight:500'>CBSE · Grade 8 · Science</span>"
+            "<div style='padding:14px 0 6px'>"
+            "<span style='font-size:18px;font-weight:600;color:#e2e8f0'>🧪 LearnIQ</span><br>"
+            "<span style='font-size:11px;color:#8b949e'>CBSE · Grade 8 · Science</span>"
             "</div>",
             unsafe_allow_html=True,
         )
@@ -458,14 +453,14 @@ def main():
         done = len(st.session_state.completed)
         pct  = int(done / len(CHAPTERS) * 100)
         st.markdown(
-            f"<div style='font-size:10px;font-weight:500;color:#8b72bf;display:flex;"
+            f"<div style='font-size:10px;color:#8b949e;display:flex;"
             f"justify-content:space-between'>"
-            f"<span>Progress</span><span style='color:#7c3aed;font-weight:700'>{done}/{len(CHAPTERS)}</span></div>"
+            f"<span>Progress</span><span>{done}/{len(CHAPTERS)} chapters</span></div>"
             f"<div class='prog-track'><div class='prog-fill' style='width:{pct}%'></div></div>",
             unsafe_allow_html=True,
         )
-        st.markdown("<div style='font-size:10px;font-weight:700;color:#8b72bf;padding:10px 0 4px;"
-                    "text-transform:uppercase;letter-spacing:0.08em'>Chapters</div>",
+        st.markdown("<div style='font-size:10px;color:#8b949e;padding:10px 0 4px;"
+                    "text-transform:uppercase;letter-spacing:0.05em'>Chapters</div>",
                     unsafe_allow_html=True)
 
         for ch in CHAPTERS:
@@ -489,7 +484,7 @@ def main():
                 st.session_state.active_tab     = "Lesson"
                 st.rerun()
 
-        st.markdown("<div style='margin-top:16px;border-top:1px solid #d8ccf0;"
+        st.markdown("<div style='margin-top:16px;border-top:1px solid #21262d;"
                     "padding-top:12px'>", unsafe_allow_html=True)
         col1, col2 = st.columns(2)
         col1.metric("Questions", st.session_state.q_count)
@@ -509,11 +504,11 @@ def main():
         # Chapter hero
         st.markdown(
             f"<div class='chapter-hero'>"
-            f"<div style='font-size:11px;color:#6B7280;font-weight:500;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px'>"
+            f"<div style='font-size:11px;color:#8b949e;margin-bottom:4px'>"
             f"Chapter {ch_info['num']}</div>"
-            f"<div style='font-size:20px;font-weight:800;color:#3b1a8a;margin-bottom:4px'>"
+            f"<div style='font-size:18px;font-weight:600;color:#e2e8f0;margin-bottom:4px'>"
             f"{ch_info['title']}</div>"
-            f"<div style='font-size:11px;color:#6b4fa8;font-weight:500'>"
+            f"<div style='font-size:11px;color:#8b949e'>"
             f"NCERT Class 8 Science</div>"
             f"</div>",
             unsafe_allow_html=True,
@@ -550,7 +545,7 @@ def main():
             lesson = st.session_state.lesson_cache[cache_key]
             st.markdown(
                 f"<div class='panel-card'>"
-                f"<div style='font-size:10px;font-weight:700;color:#7c5cbf;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:12px'>"
+                f"<div style='font-size:11px;color:#8b949e;margin-bottom:10px'>"
                 f"LESSON CONTENT</div>"
                 f"<div class='lesson-text'>{lesson['text']}</div>"
                 f"<div class='badge-row'>{make_source_pills(lesson['sources'])}</div>"
@@ -581,9 +576,9 @@ def main():
 
             st.markdown(
                 f"<div class='panel-card'>"
-                f"<div style='font-size:10px;font-weight:700;color:#7c5cbf;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:12px'>"
+                f"<div style='font-size:11px;color:#8b949e;margin-bottom:10px'>"
                 f"PRACTICE QUESTION</div>"
-                f"<div style='font-size:14px;color:#E2E8F0;font-weight:500;"
+                f"<div style='font-size:14px;color:#e2e8f0;font-weight:500;"
                 f"margin-bottom:14px;line-height:1.5'>{mcq.get('q','')}</div>",
                 unsafe_allow_html=True,
             )
@@ -662,7 +657,7 @@ def main():
             summary = st.session_state.lesson_cache[cache_key]
             st.markdown(
                 f"<div class='panel-card'>"
-                f"<div style='font-size:10px;font-weight:700;color:#7c5cbf;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:12px'>"
+                f"<div style='font-size:11px;color:#8b949e;margin-bottom:10px'>"
                 f"CHAPTER SUMMARY</div>"
                 f"<div class='lesson-text'>{summary['text']}</div>"
                 f"<div class='badge-row'>{make_source_pills(summary['sources'])}</div>"
@@ -679,10 +674,10 @@ def main():
             "<div class='tutor-header'>"
             "<div class='tutor-avatar'>AI</div>"
             "<div>"
-            "<div style='font-size:13px;font-weight:800;color:#3b1a8a'>LearnIQ Tutor</div>"
-            "<div style='font-size:10px;color:#10b981;font-weight:600;display:flex;align-items:center;gap:4px'>"
+            "<div style='font-size:13px;font-weight:600;color:#e2e8f0'>LearnIQ Tutor</div>"
+            "<div style='font-size:10px;color:#16a34a;display:flex;align-items:center;gap:4px'>"
             "<span style='width:6px;height:6px;border-radius:50%;"
-            "background:#10b981;display:inline-block'></span>Online</div>"
+            "background:#16a34a;display:inline-block'></span>Online</div>"
             "</div></div>",
             unsafe_allow_html=True,
         )
@@ -691,9 +686,8 @@ def main():
         if not st.session_state.messages:
             st.markdown(
                 "<div class='bubble-bot' style='margin-bottom:10px'>"
-                f"👋 Hi! I'm your <b style='color:#7c3aed'>LearnIQ Tutor</b>. "
-                f"Ask me anything about <b>{ch_info['title']}</b> "
-                f"or any chapter from your textbook."
+                f"Hi! I'm your LearnIQ tutor. Ask me anything about "
+                f"<b>{ch_info['title']}</b> or any chapter from your textbook."
                 "</div>",
                 unsafe_allow_html=True,
             )
