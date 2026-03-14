@@ -1,16 +1,13 @@
 """
 LearnIQ - CBSE Grade 8 Science AI Tutor
 3-Panel UI: Chapter Nav | Lesson+Practice | AI Tutor Chat
-Built on existing: LangChain + ChromaDB + GPT-4o-mini
-
-RUN ORDER:
-  1. python ingest.py        (once — builds ./chroma_db/)
-  2. streamlit run app.py    (every time after)
+Fun UI for 8th graders — streaks, XP, badges, emojis!
 """
 
 import os
 from pathlib import Path
 import streamlit as st
+
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone
@@ -25,25 +22,24 @@ except ImportError:
     pass
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
-PINECONE_INDEX = os.getenv("PINECONE_INDEX", "learniq")
+PINECONE_INDEX   = os.getenv("PINECONE_INDEX", "learniq")
+OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY", "")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
-# ── NCERT CLASS 8 CHAPTERS ────────────────────────────────────────────────────
+# ── CHAPTERS ──────────────────────────────────────────────────────────────────
 CHAPTERS = [
-    {"num": 1,  "title": "Crop Production and Management"},
-    {"num": 2,  "title": "Microorganisms: Friend and Foe"},
-    {"num": 3,  "title": "Synthetic Fibres and Plastics"},
-    {"num": 4,  "title": "Materials: Metals and Non-Metals"},
-    {"num": 5,  "title": "Coal and Petroleum"},
-    {"num": 6,  "title": "Combustion and Flame"},
-    {"num": 7,  "title": "Conservation of Plants and Animals"},
-    {"num": 8,  "title": "Cell — Structure and Functions"},
-    {"num": 9,  "title": "Reproduction in Animals"},
-    {"num": 10, "title": "Reaching the Age of Adolescence"},
+    {"num": 1,  "title": "Crop Production and Management",    "emoji": "🌾"},
+    {"num": 2,  "title": "Microorganisms: Friend and Foe",    "emoji": "🦠"},
+    {"num": 3,  "title": "Synthetic Fibres and Plastics",     "emoji": "🧵"},
+    {"num": 4,  "title": "Materials: Metals and Non-Metals",  "emoji": "⚗️"},
+    {"num": 5,  "title": "Coal and Petroleum",                "emoji": "⛽"},
+    {"num": 6,  "title": "Combustion and Flame",              "emoji": "🔥"},
+    {"num": 7,  "title": "Conservation of Plants and Animals","emoji": "🌿"},
+    {"num": 8,  "title": "Cell — Structure and Functions",    "emoji": "🔬"},
+    {"num": 9,  "title": "Reproduction in Animals",           "emoji": "🐣"},
+    {"num": 10, "title": "Reaching the Age of Adolescence",   "emoji": "🧬"},
 ]
 
-# Key topics per chapter — used to seed the lesson view via RAG
 CHAPTER_TOPICS = {
     1:  "crop production management irrigation manure fertilizer",
     2:  "microorganisms bacteria fungi protozoa algae curd bread",
@@ -57,103 +53,79 @@ CHAPTER_TOPICS = {
     10: "adolescence puberty hormones changes",
 }
 
+FUN_FACTS = {
+    1:  "🌾 Rice feeds more than half of the world's population every single day!",
+    2:  "🦠 Your gut has more bacteria than there are stars in the Milky Way galaxy!",
+    3:  "🕷️ Spider silk is stronger than steel of the same thickness — nature's own synthetic fibre!",
+    4:  "⚡ Copper has been used by humans for over 10,000 years — it's one of the first metals ever used!",
+    5:  "🦕 Fossil fuels are made from organisms that lived over 300 million years ago — before dinosaurs!",
+    6:  "🕯️ A candle flame burns at around 1,000°C at its hottest point!",
+    7:  "🐘 An elephant eats up to 150 kg of food per day to support its massive body!",
+    8:  "🔬 The human body has about 37 trillion cells — all working together right now!",
+    9:  "🐟 A female salmon lays up to 5,000 eggs at once to ensure some survive!",
+    10: "📏 The fastest growth spurt during adolescence can be up to 10 cm in a single year!",
+}
 
-# ── EMBEDDINGS + CHAIN ────────────────────────────────────────────────────────
+XP_PER_QUESTION = 10
+XP_PER_LEVEL    = 100
+
+# ── CHAINS ────────────────────────────────────────────────────────────────────
 def get_embeddings():
-    return OpenAIEmbeddings(
-        model="text-embedding-3-small",
-        openai_api_key=OPENAI_API_KEY,
-    )
-
+    return OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_API_KEY)
 
 def build_qa_chain(vectorstore):
-    llm = ChatOpenAI(
-        model="gpt-4o-mini",
-        temperature=0,
-        openai_api_key=OPENAI_API_KEY,
-    )
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=OPENAI_API_KEY)
     prompt = ChatPromptTemplate.from_template(
-        "You are LearnIQ, an AI tutor for CBSE Grade 8 Science.\n\n"
-        "Use ONLY the context below. Do NOT use outside knowledge.\n\n"
-        "If the answer exists: give a clear student-friendly explanation "
-        "and end with — Source: Page [number]\n\n"
-        "If not found: say 'I could not find this in the textbook. "
-        "Please rephrase your question.'\n\n"
-        "Context:\n{context}\n\n"
-        "Question: {input}\n\nAnswer:"
+        "You are LearnIQ, a fun and friendly AI tutor for CBSE Grade 8 Science students.\n\n"
+        "Use ONLY the context below. Keep answers short, clear and exciting for a 13-year-old.\n"
+        "Use emojis occasionally to make it fun! End with — Source: Page [number]\n\n"
+        "If not found: say 'Hmm, I couldn't find that in the textbook. Try rephrasing!'\n\n"
+        "Context:\n{context}\n\nQuestion: {input}\n\nAnswer:"
     )
     combine_docs_chain = create_stuff_documents_chain(llm, prompt)
-    retriever = vectorstore.as_retriever(
-        search_type="similarity",
-        search_kwargs={"k": 5},
-    )
+    retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 5})
     return create_retrieval_chain(retriever, combine_docs_chain)
-
 
 def build_lesson_chain(vectorstore):
-    """Separate chain for fetching lesson content — returns more chunks."""
-    llm = ChatOpenAI(
-        model="gpt-4o-mini",
-        temperature=0,
-        openai_api_key=OPENAI_API_KEY,
-    )
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=OPENAI_API_KEY)
     prompt = ChatPromptTemplate.from_template(
-        "You are a textbook summariser for CBSE Grade 8 Science.\n\n"
-        "Using ONLY the context below, write a clear lesson summary "
-        "for a student. Use short paragraphs. Bold key terms. "
+        "You are a fun textbook summariser for CBSE Grade 8 Science.\n\n"
+        "Using ONLY the context below, write a clear lesson for a student. "
+        "Use short paragraphs. Bold key terms. Use emojis to make it engaging! "
         "Keep it under 200 words. End with 'Source: Page X–Y'.\n\n"
-        "Context:\n{context}\n\n"
-        "Topic: {input}\n\nLesson summary:"
+        "Context:\n{context}\n\nTopic: {input}\n\nLesson summary:"
     )
     combine_docs_chain = create_stuff_documents_chain(llm, prompt)
-    retriever = vectorstore.as_retriever(
-        search_type="similarity",
-        search_kwargs={"k": 6},
-    )
+    retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 6})
     return create_retrieval_chain(retriever, combine_docs_chain)
 
-
 def build_practice_chain(vectorstore):
-    """Chain that generates a practice MCQ from retrieved context."""
-    llm = ChatOpenAI(
-        model="gpt-4o-mini",
-        temperature=0.3,
-        openai_api_key=OPENAI_API_KEY,
-    )
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3, openai_api_key=OPENAI_API_KEY)
     prompt = ChatPromptTemplate.from_template(
         "You are a CBSE Grade 8 Science teacher.\n\n"
         "Using ONLY the context below, create ONE multiple-choice question.\n"
         "Format EXACTLY as:\n"
-        "Q: [question]\n"
-        "A) [option]\n"
-        "B) [option]\n"
-        "C) [option]\n"
-        "D) [option]\n"
-        "Answer: [correct letter]\n"
-        "Explanation: [one sentence from the textbook]\n\n"
-        "Context:\n{context}\n\n"
-        "Topic: {input}\n\nQuestion:"
+        "Q: [question]\nA) [option]\nB) [option]\nC) [option]\nD) [option]\n"
+        "Answer: [correct letter]\nExplanation: [one sentence from the textbook]\n\n"
+        "Context:\n{context}\n\nTopic: {input}\n\nQuestion:"
     )
     combine_docs_chain = create_stuff_documents_chain(llm, prompt)
-    retriever = vectorstore.as_retriever(
-        search_type="similarity",
-        search_kwargs={"k": 4},
-    )
+    retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 4})
     return create_retrieval_chain(retriever, combine_docs_chain)
-
 
 @st.cache_resource(show_spinner=False)
 def load_all_chains(_pinecone_index: str):
     embeddings  = get_embeddings()
     vectorstore = PineconeVectorStore(index_name=_pinecone_index, embedding=embeddings)
-    pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY", ""))
-    stats = pc.Index(_pinecone_index).describe_index_stats()
+    pc        = Pinecone(api_key=os.getenv("PINECONE_API_KEY", ""))
+    index     = pc.Index(_pinecone_index)
+    stats     = index.describe_index_stats()
     doc_count = stats.get("total_vector_count", 0)
-    return (build_qa_chain(vectorstore), build_lesson_chain(vectorstore), build_practice_chain(vectorstore), doc_count)
-
+    return (build_qa_chain(vectorstore), build_lesson_chain(vectorstore),
+            build_practice_chain(vectorstore), doc_count)
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
-def make_source_pills(source_docs: list) -> str:
+def make_source_pills(source_docs):
     seen, pills = set(), []
     for doc in source_docs:
         label = doc.metadata.get("source_label", "")
@@ -163,18 +135,16 @@ def make_source_pills(source_docs: list) -> str:
         if label not in seen:
             seen.add(label)
             pills.append(
-                f'<span style="background:#c4b5fd;color:#a5b4fc;'
+                f'<span style="background:#ede9fe;color:#5b21b6;'
                 f'padding:3px 10px;border-radius:20px;font-size:0.7rem;'
                 f'margin-right:5px;display:inline-block;margin-top:4px;">'
                 f'📄 {label}</span>'
             )
     return "".join(pills)
 
-
-def parse_mcq(raw: str):
-    """Parse the MCQ string into structured dict."""
-    lines  = [l.strip() for l in raw.strip().split("\n") if l.strip()]
-    mcq    = {"q": "", "options": {}, "answer": "", "explanation": ""}
+def parse_mcq(raw):
+    lines = [l.strip() for l in raw.strip().split("\n") if l.strip()]
+    mcq   = {"q": "", "options": {}, "answer": "", "explanation": ""}
     for line in lines:
         if line.startswith("Q:"):
             mcq["q"] = line[2:].strip()
@@ -186,104 +156,104 @@ def parse_mcq(raw: str):
             mcq["explanation"] = line.split(":", 1)[1].strip()
     return mcq
 
+def get_level(xp):
+    return xp // XP_PER_LEVEL + 1
 
-# ── CSS — Khanmigo Lavender/Purple Palette ─────────────────────────────────────────────
-# Background:  #0f1117  (deep navy-slate)
-# Surface:     #ffffff  (elevated panels)
-# Border:      #d8ccf0  (subtle dividers)
-# Accent:      #7c3aed  (indigo — buttons, active states)
-# Accent soft: #a78bfa  (indigo-300 — hover, highlights)
-# Text pri:    #3b1a8a  (near white)
-# Text sec:    #6b4fa8  (muted slate)
-# Text muted:  #4a5568  (very muted)
-# Success:     #10b981  (emerald)
-# Error:       #ef4444  (red)
+def get_xp_progress(xp):
+    return xp % XP_PER_LEVEL
+
+# ── CSS ───────────────────────────────────────────────────────────────────────
 def apply_css():
     st.markdown("""
     <style>
-        /* ── Global ── */
-        .stApp { background:#faf8ff !important; }
+        .stApp { background:#fdf6ff !important; }
         .block-container { padding: 0 !important; max-width: 100% !important; }
-        header[data-testid="stHeader"] { background:#faf8ff !important; }
+        header[data-testid="stHeader"] {
+            background:#fdf6ff !important;
+            border-bottom: 1px solid #e0d4f8 !important;
+        }
         section[data-testid="stSidebar"] {
-            background:#faf8ff !important;
-            border-right: 1px solid #d8ccf0 !important;
+            background: linear-gradient(180deg, #7c3aed 0%, #5b21b6 100%) !important;
+            border-right: none !important;
         }
+        section[data-testid="stSidebar"] * { color: white !important; }
 
-        /* ── Sidebar chapter list ── */
-        .ch-item {
+        /* streak box */
+        .streak-box {
+            background: rgba(255,255,255,0.15); border-radius: 12px;
+            padding: 10px 14px; margin: 10px 0;
             display: flex; align-items: center; gap: 10px;
-            padding: 8px 12px; border-radius: 8px; cursor: pointer;
-            margin-bottom: 2px; transition: background 0.15s;
         }
-        .ch-item:hover { background: #ffffff; }
-        .ch-active {
-            background: #ede9fe !important;
-            border-left: 3px solid #7c3aed;
+        .streak-val { font-size: 22px; font-weight: 900; color: #fbbf24 !important; }
+        .streak-lbl { font-size: 10px; color: rgba(255,255,255,0.75) !important; }
+
+        /* xp bar */
+        .xp-track { height: 6px; background: rgba(255,255,255,0.2); border-radius: 3px; margin: 4px 0 8px; }
+        .xp-fill  { height: 6px; background: #fbbf24; border-radius: 3px; }
+
+        /* chapter items */
+        .ch-item {
+            display: flex; align-items: center; gap: 8px;
+            padding: 7px 10px; border-radius: 8px;
+            margin: 1px 0; cursor: pointer;
         }
+        .ch-item:hover { background: rgba(255,255,255,0.15); }
+        .ch-active { background: rgba(255,255,255,0.2) !important; }
         .ch-num {
-            min-width: 24px; height: 24px; border-radius: 50%;
-            background: #d8ccf0; color: #6b4fa8;
-            font-size: 11px; font-weight: 600;
+            min-width: 22px; height: 22px; border-radius: 50%;
+            background: rgba(255,255,255,0.2);
+            font-size: 10px; font-weight: 700; color: white !important;
             display: flex; align-items: center; justify-content: center;
         }
-        .ch-num-active { background: #7c3aed !important; color: white !important; }
-        .ch-label { font-size: 12px; color: #6b4fa8; line-height: 1.3; }
-        .ch-label-active { color: #3b1a8a !important; font-weight: 500; }
-        .ch-done {
-            width: 8px; height: 8px; border-radius: 50%;
-            background: #10b981; margin-left: auto; flex-shrink: 0;
-        }
+        .ch-num-active { background: #fbbf24 !important; color: #5b21b6 !important; }
+        .ch-label { font-size: 11px; color: rgba(255,255,255,0.85) !important; line-height: 1.3; }
+        .ch-label-active { color: white !important; font-weight: 700; }
 
-        /* ── Progress bar ── */
-        .prog-track {
-            height: 4px; background: #d8ccf0;
-            border-radius: 2px; margin: 8px 0 4px;
-        }
-        .prog-fill {
-            height: 4px; background: #7c3aed;
-            border-radius: 2px; transition: width 0.3s;
-        }
+        /* badges */
+        .badge-earned { font-size: 18px; }
+        .badge-locked { font-size: 18px; opacity: 0.3; }
 
-        /* ── Center panel ── */
+        /* center cards */
         .panel-card {
-            background: #ffffff; border: 1px solid #d8ccf0;
-            border-radius: 12px; padding: 20px 24px; margin-bottom: 16px;
+            background: #ffffff; border: 2px solid #e0d4f8;
+            border-radius: 14px; padding: 20px 24px; margin-bottom: 14px;
+            box-shadow: 0 2px 8px rgba(124,58,237,0.08);
         }
         .chapter-hero {
-            background: #ede9fe;
-            border: 1px solid #c4b5fd; border-radius: 12px;
-            padding: 20px 24px; margin-bottom: 16px;
+            background: linear-gradient(120deg, #7c3aed 0%, #a78bfa 100%);
+            border-radius: 14px; padding: 20px 24px; margin-bottom: 14px;
+            display: flex; align-items: center; gap: 16px;
+        }
+        .hero-icon {
+            width: 52px; height: 52px; border-radius: 14px;
+            background: rgba(255,255,255,0.2);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 26px; flex-shrink: 0;
         }
         .lesson-text {
-            color: #3b1a8a; font-size: 0.92rem;
-            line-height: 1.8; white-space: pre-wrap;
+            color: #374151; font-size: 0.93rem;
+            line-height: 1.85; white-space: pre-wrap;
         }
-        .lesson-text b, .lesson-text strong { color: #3b1a8a; }
+        .lesson-text b, .lesson-text strong { color: #5b21b6; }
 
-        /* ── Tab bar ── */
-        .tab-bar {
-            display: flex; gap: 4px; margin-bottom: 16px;
-            border-bottom: 1px solid #d8ccf0; padding-bottom: 0;
+        .fun-fact-box {
+            background: linear-gradient(120deg, #fef3c7, #fde68a);
+            border: 2px solid #fbbf24; border-radius: 12px;
+            padding: 12px 16px; margin-top: 14px;
         }
-        .tab-btn {
-            padding: 8px 18px; border-radius: 8px 8px 0 0;
-            border: none; background: transparent;
-            color: #6b4fa8; font-size: 13px; cursor: pointer;
-            border-bottom: 2px solid transparent;
-            font-family: sans-serif; transition: all 0.15s;
-        }
-        .tab-btn:hover { color: #3b1a8a; }
-        .tab-btn-active {
-            color: #a78bfa !important;
-            border-bottom-color: #7c3aed !important;
-            font-weight: 600;
+        .fun-fact-lbl { font-size: 10px; font-weight: 800; color: #92400e;
+                        text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+        .fun-fact-text { font-size: 12px; color: #78350f; line-height: 1.6; }
+
+        .xp-award {
+            display: inline-flex; align-items: center; gap: 5px;
+            background: #ecfdf5; border: 1.5px solid #10b981;
+            color: #065f46; font-size: 11px; font-weight: 700;
+            padding: 4px 10px; border-radius: 20px; margin-top: 6px;
         }
 
-        /* ── Chat bubbles ── */
-        .chat-wrap {
-            display: flex; flex-direction: column; gap: 10px; padding: 10px 0;
-        }
+        /* chat */
+        .chat-wrap { display: flex; flex-direction: column; gap: 10px; padding: 8px 0; }
         .bubble-user {
             background: #7c3aed; color: white;
             border-radius: 16px 16px 4px 16px;
@@ -291,123 +261,185 @@ def apply_css():
             max-width: 90%; font-size: 0.85rem; line-height: 1.5;
         }
         .bubble-bot {
-            background: #ffffff; border: 1px solid #d8ccf0;
+            background: #f5f3ff; border: 1.5px solid #e0d4f8;
             color: #3b1a8a; border-radius: 16px 16px 16px 4px;
             padding: 10px 14px; max-width: 95%;
             font-size: 0.85rem; line-height: 1.6;
         }
-        .badge-row {
-            margin-top: 8px; padding-top: 6px;
-            border-top: 1px solid #d8ccf0;
-        }
+        .badge-row { margin-top: 8px; padding-top: 6px; border-top: 1px solid #e0d4f8; }
 
-        /* ── MCQ options ── */
+        /* MCQ */
         .mcq-option {
             display: flex; align-items: center; gap: 10px;
-            padding: 9px 12px; border: 1px solid #d8ccf0;
-            border-radius: 8px; margin-bottom: 6px;
-            cursor: pointer; font-size: 13px; color: #6b4fa8;
-            transition: all 0.15s; background:#faf8ff;
+            padding: 10px 14px; border: 2px solid #e0d4f8;
+            border-radius: 10px; margin-bottom: 8px;
+            cursor: pointer; font-size: 13px; color: #5b21b6;
+            transition: all 0.15s; background: #faf8ff;
         }
-        .mcq-option:hover {
-            border-color: #7c3aed; color: #3b1a8a; background: #ede9fe;
-        }
-        .mcq-correct {
-            border-color: #10b981 !important;
-            background: #064e3b !important; color: #6ee7b7 !important;
-        }
-        .mcq-wrong {
-            border-color: #ef4444 !important;
-            background: #450a0a !important; color: #fca5a5 !important;
-        }
+        .mcq-option:hover { border-color: #7c3aed; background: #ede9fe; }
+        .mcq-correct { border-color: #10b981 !important; background: #ecfdf5 !important; color: #065f46 !important; }
+        .mcq-wrong   { border-color: #ef4444 !important; background: #fef2f2 !important; color: #991b1b !important; }
 
-        /* ── Tutor panel header ── */
+        /* tutor header */
         .tutor-header {
             display: flex; align-items: center; gap: 10px;
-            padding: 12px 0 10px; border-bottom: 1px solid #d8ccf0;
-            margin-bottom: 10px;
+            padding: 12px 0 10px; border-bottom: 2px solid #e0d4f8; margin-bottom: 10px;
         }
         .tutor-avatar {
-            width: 32px; height: 32px; border-radius: 50%;
-            background: #7c3aed; color: white;
+            width: 36px; height: 36px; border-radius: 50%;
+            background: linear-gradient(135deg, #7c3aed, #a78bfa); color: white;
             display: flex; align-items: center; justify-content: center;
-            font-size: 13px; font-weight: 600; flex-shrink: 0;
+            font-size: 13px; font-weight: 900; flex-shrink: 0;
+        }
+        .lvl-badge {
+            background: #ede9fe; color: #5b21b6; font-size: 10px; font-weight: 800;
+            padding: 3px 9px; border-radius: 20px; margin-left: auto;
         }
 
-        /* ── Suggest pills ── */
-        .suggest-row { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 10px; }
+        /* suggest pills */
         .suggest-pill {
-            font-size: 11px; padding: 4px 10px;
-            border: 1px solid #d8ccf0; border-radius: 20px;
-            color: #6b4fa8; cursor: pointer; background: transparent;
-            font-family: sans-serif; transition: all 0.15s;
+            font-size: 11px; padding: 5px 11px;
+            border: 1.5px solid #c4b5fd; border-radius: 20px;
+            color: #5b21b6; cursor: pointer; background: #f5f3ff;
+            font-family: sans-serif; font-weight: 600; transition: all 0.15s;
         }
-        .suggest-pill:hover { border-color: #a78bfa; color: #a78bfa; }
+        .suggest-pill:hover { background: #7c3aed; color: white; border-color: #7c3aed; }
 
-        /* ── Inputs ── */
+        /* inputs */
         .stTextInput input {
-            background: #ffffff !important; border: 1px solid #d8ccf0 !important;
+            background: #faf8ff !important; border: 2px solid #e0d4f8 !important;
             color: #3b1a8a !important; border-radius: 10px !important;
-            font-size: 0.85rem !important;
+            font-size: 0.87rem !important;
         }
-        .stTextInput input:focus {
-            border-color: #7c3aed !important;
-            box-shadow: 0 0 0 2px #c4b5fd40 !important;
-        }
+        .stTextInput input:focus { border-color: #7c3aed !important; box-shadow: 0 0 0 3px rgba(124,58,237,0.12) !important; }
         .stFormSubmitButton button {
             background: #7c3aed !important; color: white !important;
-            border-radius: 10px !important; font-weight: 600 !important;
-            border: none !important; transition: background 0.15s !important;
+            border-radius: 10px !important; font-weight: 800 !important; border: none !important;
         }
-        .stFormSubmitButton button:hover {
-            background: #4338ca !important;
-        }
+        .stFormSubmitButton button:hover { background: #6d28d9 !important; }
         div[data-testid="stButton"] button {
-            background: transparent !important; border: 1px solid #d8ccf0 !important;
+            background: #f5f3ff !important; border: 1.5px solid #e0d4f8 !important;
             color: #6b4fa8 !important; border-radius: 8px !important;
             font-size: 12px !important; transition: all 0.15s !important;
         }
         div[data-testid="stButton"] button:hover {
-            border-color: #7c3aed !important; color: #a78bfa !important;
-            background: #ede9fe !important;
+            border-color: #7c3aed !important; color: #7c3aed !important; background: #ede9fe !important;
         }
 
-        /* ── Metrics ── */
-        [data-testid="stMetricValue"] { color: #a78bfa !important; font-size: 1.2rem !important; }
-        [data-testid="stMetricLabel"] { color: #6b4fa8 !important; font-size: 0.75rem !important; }
+        /* metrics */
+        [data-testid="stMetricValue"] { color: #fbbf24 !important; font-size: 1.4rem !important; font-weight: 900 !important; }
+        [data-testid="stMetricLabel"] { color: rgba(255,255,255,0.7) !important; font-size: 0.75rem !important; }
 
-        /* ── Alerts / success / error ── */
+        /* alerts */
         div[data-testid="stAlert"] { border-radius: 10px !important; }
-        .stSuccess { background: #064e3b !important; color: #6ee7b7 !important;
-                     border: 1px solid #10b981 !important; }
-        .stError   { background: #450a0a !important; color: #fca5a5 !important;
-                     border: 1px solid #ef4444 !important; }
-
-        /* ── Spinner ── */
+        .stSuccess { background: #ecfdf5 !important; color: #065f46 !important; border: 2px solid #10b981 !important; }
+        .stError   { background: #fef2f2 !important; color: #991b1b !important; border: 2px solid #ef4444 !important; }
         .stSpinner > div { border-top-color: #7c3aed !important; }
-
-        /* ── Hide Streamlit chrome ── */
+        hr { border-color: #e0d4f8 !important; }
         #MainMenu, footer, .stDeployButton { display: none !important; }
+
+        /* ── ANIMATIONS ── */
+        @keyframes popIn {
+            0%   { transform: scale(0) rotate(-10deg); opacity: 0; }
+            70%  { transform: scale(1.15) rotate(2deg); }
+            100% { transform: scale(1) rotate(0deg); opacity: 1; }
+        }
+        @keyframes slideInLeft {
+            0%   { transform: translateX(-40px); opacity: 0; }
+            100% { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes bounceIn {
+            0%   { transform: scale(0.8); opacity: 0; }
+            50%  { transform: scale(1.05); }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        @keyframes starPop {
+            0%   { transform: scale(0) rotate(-30deg); opacity: 0; }
+            70%  { transform: scale(1.3) rotate(10deg); opacity: 1; }
+            100% { transform: scale(1) rotate(0deg); opacity: 1; }
+        }
+        @keyframes fillBar {
+            0%   { width: 0%; }
+            100% { width: var(--xp-pct); }
+        }
+        @keyframes fireP { 0% { transform: scale(1); } 100% { transform: scale(1.3); } }
+        @keyframes typingB { 0%,60%,100% { transform: translateY(0); } 30% { transform: translateY(-7px); } }
+        @keyframes confettiF { 0% { transform: translateY(-10px) rotate(0deg); opacity:1; } 100% { transform: translateY(120px) rotate(360deg); opacity:0; } }
+        @keyframes fadeSlideUp { 0% { transform: translateY(12px); opacity:0; } 100% { transform: translateY(0); opacity:1; } }
+
+        .anim-pop     { animation: popIn 0.4s cubic-bezier(0.175,0.885,0.32,1.275) both; }
+        .anim-slide   { animation: slideInLeft 0.5s cubic-bezier(0.175,0.885,0.32,1.275) both; }
+        .anim-bounce  { animation: bounceIn 0.4s ease both; }
+        .anim-fadeup  { animation: fadeSlideUp 0.35s ease both; }
+
+        .xp-award {
+            display: inline-flex; align-items: center; gap: 5px;
+            background: #ecfdf5; border: 2px solid #10b981;
+            color: #065f46; font-size: 12px; font-weight: 800;
+            padding: 5px 12px; border-radius: 20px; margin-top: 6px;
+            animation: popIn 0.4s cubic-bezier(0.175,0.885,0.32,1.275) both;
+        }
+        .level-up-banner {
+            background: linear-gradient(135deg, #fbbf24, #f59e0b);
+            border-radius: 14px; padding: 14px 20px;
+            display: flex; align-items: center; gap: 12px;
+            animation: slideInLeft 0.5s cubic-bezier(0.175,0.885,0.32,1.275) both;
+            margin-bottom: 12px;
+        }
+        .confetti-container {
+            position: relative; overflow: hidden;
+            border-radius: 14px; padding: 18px 20px;
+            background: linear-gradient(120deg, #ede9fe, #fdf6ff);
+            border: 2px solid #c4b5fd; margin-bottom: 12px;
+            text-align: center;
+        }
+        .confetti-dot {
+            position: absolute; width: 8px; height: 8px;
+            animation: confettiF linear forwards;
+        }
+        .typing-wrap {
+            display: flex; align-items: center; gap: 5px;
+            padding: 10px 16px; background: #f5f3ff;
+            border: 1.5px solid #e0d4f8; border-radius: 14px 14px 14px 3px;
+            width: fit-content; margin-bottom: 8px;
+        }
+        .typing-dot {
+            width: 8px; height: 8px; border-radius: 50%; background: #7c3aed;
+            animation: typingB 1.2s ease-in-out infinite;
+        }
+        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+        .fire-icon { display: inline-block; animation: fireP 0.8s ease-in-out infinite alternate; }
+        .star-1 { animation: starPop 0.3s ease forwards; opacity:0; }
+        .star-2 { animation: starPop 0.3s 0.1s ease forwards; opacity:0; }
+        .star-3 { animation: starPop 0.3s 0.2s ease forwards; opacity:0; }
+        .xp-bar-animated {
+            height: 14px; background: linear-gradient(90deg, #7c3aed, #a78bfa);
+            border-radius: 8px; display: flex; align-items: center;
+            justify-content: flex-end; padding-right: 6px;
+            font-size: 10px; font-weight: 800; color: white;
+            animation: fillBar 1.2s ease-out forwards;
+        }
+        .bubble-bot { animation: fadeSlideUp 0.35s ease both; }
+        .bubble-user { animation: fadeSlideUp 0.35s ease both; }
+        .panel-card { animation: fadeSlideUp 0.4s ease both; }
     </style>
     """, unsafe_allow_html=True)
 
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 def main():
-    st.set_page_config(
-        page_title="LearnIQ",
-        page_icon="🧪",
-        layout="wide",
-        initial_sidebar_state="expanded",
-    )
+    st.set_page_config(page_title="LearnIQ", page_icon="🧪", layout="wide",
+                       initial_sidebar_state="expanded")
     apply_css()
 
-    # ── Session state init ────────────────────────────────────────────────────
     defaults = {
         "active_chapter": 2,
         "active_tab":     "Lesson",
         "messages":       [],
         "q_count":        0,
+        "xp":             0,
+        "streak":         7,
         "lesson_cache":   {},
         "practice_cache": {},
         "mcq_answered":   {},
@@ -417,45 +449,54 @@ def main():
         if k not in st.session_state:
             st.session_state[k] = v
 
-    # ── Guards ────────────────────────────────────────────────────────────────
     if not OPENAI_API_KEY:
-        st.error("**OPENAI_API_KEY not set.** Add to `.env`: `OPENAI_API_KEY=sk-...`")
+        st.error("**OPENAI_API_KEY not set.**")
         st.stop()
     if not PINECONE_API_KEY:
-        st.error("PINECONE_API_KEY not set in Secrets.")
+        st.error("**PINECONE_API_KEY not set.** Add to Streamlit Secrets.")
         st.stop()
 
-    # ── Load chains ───────────────────────────────────────────────────────────
-    with st.spinner("Loading knowledge base..."):
+    with st.spinner("🚀 Loading LearnIQ..."):
         qa_chain, lesson_chain, practice_chain, doc_count = load_all_chains(PINECONE_INDEX)
 
     ch_idx   = st.session_state.active_chapter
     ch_info  = next(c for c in CHAPTERS if c["num"] == ch_idx)
     ch_topic = CHAPTER_TOPICS.get(ch_idx, ch_info["title"])
+    level    = get_level(st.session_state.xp)
+    xp_prog  = get_xp_progress(st.session_state.xp)
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # LEFT SIDEBAR — Chapter navigation
-    # ══════════════════════════════════════════════════════════════════════════
+    # ── SIDEBAR ───────────────────────────────────────────────────────────────
     with st.sidebar:
         st.markdown(
-            "<div style='padding:14px 0 6px'>"
-            "<span style='font-size:18px;font-weight:600;color:#3b1a8a'>🧪 LearnIQ</span><br>"
-            "<span style='font-size:11px;color:#8b949e'>CBSE · Grade 8 · Science</span>"
+            "<div style='padding:16px 0 8px'>"
+            "<span style='font-size:26px;font-weight:900;color:white;letter-spacing:-0.5px'>🧪 LearnIQ</span><br>"
+            "<span style='font-size:11px;color:rgba(255,255,255,0.65);font-weight:500'>CBSE · Grade 8 · Science</span>"
             "</div>",
             unsafe_allow_html=True,
         )
 
-        done = len(st.session_state.completed)
-        pct  = int(done / len(CHAPTERS) * 100)
+        # Streak
         st.markdown(
-            f"<div style='font-size:10px;color:#8b949e;display:flex;"
-            f"justify-content:space-between'>"
-            f"<span>Progress</span><span>{done}/{len(CHAPTERS)} chapters</span></div>"
-            f"<div class='prog-track'><div class='prog-fill' style='width:{pct}%'></div></div>",
+            f"<div class='streak-box'>"
+            f"<span class='fire-icon' style='font-size:24px'>🔥</span>"
+            f"<div><div class='streak-val'>{st.session_state.streak}</div>"
+            f"<div class='streak-lbl'>day streak!</div></div>"
+            f"<span style='margin-left:auto;font-size:20px'>⚡</span>"
+            f"</div>",
             unsafe_allow_html=True,
         )
-        st.markdown("<div style='font-size:10px;color:#8b949e;padding:10px 0 4px;"
-                    "text-transform:uppercase;letter-spacing:0.05em'>Chapters</div>",
+
+        # XP bar
+        st.markdown(
+            f"<div style='font-size:10px;color:rgba(255,255,255,0.65);display:flex;justify-content:space-between'>"
+            f"<span>Level {level} · {st.session_state.xp} XP</span><span>{level * XP_PER_LEVEL} XP</span></div>"
+            f"<div class='xp-track'><div class='xp-bar-animated' style='--xp-pct:{xp_prog}%'>{xp_prog}%</div></div>",
+            unsafe_allow_html=True,
+        )
+
+        # Chapters
+        st.markdown("<div style='font-size:9px;font-weight:700;color:rgba(255,255,255,0.5);"
+                    "text-transform:uppercase;letter-spacing:0.08em;padding:4px 0 3px'>Chapters</div>",
                     unsafe_allow_html=True)
 
         for ch in CHAPTERS:
@@ -464,117 +505,154 @@ def main():
             num_cls   = "ch-num ch-num-active" if is_active else "ch-num"
             lbl_cls   = "ch-label ch-label-active" if is_active else "ch-label"
             card_cls  = "ch-item ch-active" if is_active else "ch-item"
-            done_dot  = "<div class='ch-done'></div>" if is_done and not is_active else ""
+            star      = "⭐" if is_done and not is_active else ""
 
             st.markdown(
-                f"<div class='{card_cls}' id='ch{ch['num']}'>"
+                f"<div class='{card_cls}'>"
                 f"<div class='{num_cls}'>{ch['num']}</div>"
-                f"<div class='{lbl_cls}'>{ch['title']}</div>"
-                f"{done_dot}</div>",
+                f"<div class='{lbl_cls}'>{ch['emoji']} {ch['title']}</div>"
+                f"<span style='margin-left:auto;font-size:12px'>{star}</span>"
+                f"</div>",
                 unsafe_allow_html=True,
             )
-            if st.button(f"Open", key=f"ch_btn_{ch['num']}",
-                         help=ch["title"], use_container_width=True):
+            if st.button("Open", key=f"ch_btn_{ch['num']}", use_container_width=True):
                 st.session_state.active_chapter = ch["num"]
                 st.session_state.active_tab     = "Lesson"
                 st.rerun()
 
-        st.markdown("<div style='margin-top:16px;border-top:1px solid #21262d;"
-                    "padding-top:12px'>", unsafe_allow_html=True)
+        # Badges
+        done = len(st.session_state.completed)
+        st.markdown(
+            "<div style='margin-top:12px;border-top:1px solid rgba(255,255,255,0.2);padding-top:10px'>"
+            "<div style='font-size:9px;font-weight:700;color:rgba(255,255,255,0.5);"
+            "text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px'>Badges</div>"
+            "<div style='display:flex;gap:6px;flex-wrap:wrap'>",
+            unsafe_allow_html=True,
+        )
+        badge_icons = ["🏆","🔬","⚗️","🧬","🌱","🔥","💡","⭐","🎯","🚀"]
+        badge_html = ""
+        for i, icon in enumerate(badge_icons):
+            cls = "badge-earned" if i < done else "badge-locked"
+            badge_html += f"<span class='{cls}'>{icon}</span>"
+        st.markdown(badge_html + "</div></div>", unsafe_allow_html=True)
+
+        st.markdown("<div style='border-top:1px solid rgba(255,255,255,0.2);padding-top:10px;margin-top:10px'>",
+                    unsafe_allow_html=True)
         col1, col2 = st.columns(2)
         col1.metric("Questions", st.session_state.q_count)
-        col2.metric("Cost", f"${st.session_state.q_count * 0.00018:.3f}")
-        st.caption(f"✅ {doc_count} chunks · Budget $5.00")
+        col2.metric("XP", st.session_state.xp)
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # MAIN AREA — two columns: center (lesson) + right (chat)
-    # ══════════════════════════════════════════════════════════════════════════
+    # ── MAIN COLUMNS ──────────────────────────────────────────────────────────
     col_center, col_right = st.columns([6, 4], gap="medium")
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # CENTER COLUMN — Chapter hero + Tabs (Lesson / Practice / Summary)
-    # ══════════════════════════════════════════════════════════════════════════
+    # ── CENTER ────────────────────────────────────────────────────────────────
     with col_center:
-        # Chapter hero
         st.markdown(
             f"<div class='chapter-hero'>"
-            f"<div style='font-size:11px;color:#8b949e;margin-bottom:4px'>"
-            f"Chapter {ch_info['num']}</div>"
-            f"<div style='font-size:18px;font-weight:600;color:#3b1a8a;margin-bottom:4px'>"
-            f"{ch_info['title']}</div>"
-            f"<div style='font-size:11px;color:#8b949e'>"
-            f"NCERT Class 8 Science</div>"
+            f"<div class='hero-icon'>{ch_info['emoji']}</div>"
+            f"<div>"
+            f"<div style='font-size:11px;color:rgba(255,255,255,0.75);font-weight:600;"
+            f"text-transform:uppercase;letter-spacing:0.07em'>Chapter {ch_info['num']}</div>"
+            f"<div style='font-size:19px;font-weight:900;color:white;margin:2px 0'>{ch_info['title']}</div>"
+            f"<div style='font-size:11px;color:rgba(255,255,255,0.7)'>NCERT Class 8 Science</div>"
+            f"</div>"
+            f"<div style='margin-left:auto;background:rgba(255,255,255,0.2);border-radius:20px;"
+            f"padding:6px 14px;font-size:12px;font-weight:800;color:#fbbf24'>+50 XP</div>"
             f"</div>",
             unsafe_allow_html=True,
         )
 
-        # Tab selector
         t1, t2, t3 = st.columns(3)
-        if t1.button("📖  Lesson",    key="tab_lesson",
-                     use_container_width=True):
-            st.session_state.active_tab = "Lesson"
-            st.rerun()
-        if t2.button("✏️  Practice",  key="tab_practice",
-                     use_container_width=True):
-            st.session_state.active_tab = "Practice"
-            st.rerun()
-        if t3.button("📋  Summary",   key="tab_summary",
-                     use_container_width=True):
-            st.session_state.active_tab = "Summary"
-            st.rerun()
+        if t1.button("📖  Lesson",   key="tab_lesson",   use_container_width=True):
+            st.session_state.active_tab = "Lesson";   st.rerun()
+        if t2.button("✏️  Practice", key="tab_practice", use_container_width=True):
+            st.session_state.active_tab = "Practice"; st.rerun()
+        if t3.button("📋  Summary",  key="tab_summary",  use_container_width=True):
+            st.session_state.active_tab = "Summary";  st.rerun()
 
         active_tab = st.session_state.active_tab
 
-        # ── TAB: LESSON ───────────────────────────────────────────────────────
+        # LESSON
         if active_tab == "Lesson":
             cache_key = f"lesson_{ch_idx}"
             if cache_key not in st.session_state.lesson_cache:
-                with st.spinner(f"Loading lesson for Chapter {ch_idx}..."):
+                with st.spinner(f"✨ Loading lesson..."):
                     result = lesson_chain.invoke({"input": ch_topic})
                     st.session_state.lesson_cache[cache_key] = {
-                        "text":    result.get("answer", ""),
-                        "sources": result.get("context", []),
+                        "text": result.get("answer", ""), "sources": result.get("context", [])
                     }
-
             lesson = st.session_state.lesson_cache[cache_key]
             st.markdown(
                 f"<div class='panel-card'>"
-                f"<div style='font-size:11px;color:#8b949e;margin-bottom:10px'>"
-                f"LESSON CONTENT</div>"
+                f"<div style='font-size:10px;font-weight:800;color:#7c3aed;text-transform:uppercase;"
+                f"letter-spacing:0.08em;margin-bottom:12px'>🔬 Lesson Content</div>"
                 f"<div class='lesson-text'>{lesson['text']}</div>"
                 f"<div class='badge-row'>{make_source_pills(lesson['sources'])}</div>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
-            if st.button("Mark chapter as complete ✓", key="mark_done"):
+            # Fun fact
+            st.markdown(
+                f"<div class='fun-fact-box'>"
+                f"<div class='fun-fact-lbl'>🌟 Did you know?</div>"
+                f"<div class='fun-fact-text'>{FUN_FACTS.get(ch_idx, '')}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button("✅ Mark chapter complete!", key="mark_done"):
                 st.session_state.completed.add(ch_idx)
-                st.success("Chapter marked complete!")
+                st.session_state.xp += 50
+                old_level = get_level(st.session_state.xp - 50)
+                new_level = get_level(st.session_state.xp)
+                if new_level > old_level:
+                    st.markdown(
+                        f"<div class='level-up-banner'>"
+                        f"<span style='font-size:32px'>🏆</span>"
+                        f"<div><div style='font-size:11px;color:#92400e;font-weight:700;text-transform:uppercase'>Level Up!</div>"
+                        f"<div style='font-size:18px;font-weight:900;color:#78350f'>You reached Level {new_level}! 🎉</div>"
+                        f"</div></div>",
+                        unsafe_allow_html=True)
+                st.markdown(
+                    "<div class='confetti-container' id='confetti'>"
+                    "<div style='font-size:18px;font-weight:900;color:#5b21b6'>🎉 Chapter Complete! +50 XP!</div>"
+                    "<div style='margin-top:8px'>"
+                    "<span class='star-1'>⭐</span> <span class='star-2'>⭐</span> <span class='star-3'>⭐</span>"
+                    "</div></div>"
+                    "<script>"
+                    "const w=document.getElementById('confetti');"
+                    "const c=['#7c3aed','#fbbf24','#10b981','#f472b6','#60a5fa'];"
+                    "for(let i=0;i<20;i++){const d=document.createElement('div');"
+                    "d.className='confetti-dot';"
+                    "d.style.cssText=`left:${Math.random()*100}%;top:-10px;background:${c[Math.floor(Math.random()*c.length)]};"
+                    "width:${6+Math.random()*6}px;height:${6+Math.random()*6}px;"
+                    "border-radius:${Math.random()>.5?'50%':'2px'};"
+                    "animation-duration:${0.8+Math.random()*.8}s;animation-delay:${Math.random()*.4}s;`;"
+                    "w.appendChild(d);}"
+                    "</script>",
+                    unsafe_allow_html=True)
                 st.rerun()
 
-        # ── TAB: PRACTICE ─────────────────────────────────────────────────────
+        # PRACTICE
         elif active_tab == "Practice":
             cache_key = f"practice_{ch_idx}"
             if cache_key not in st.session_state.practice_cache:
-                with st.spinner("Generating practice question..."):
+                with st.spinner("🎯 Generating question..."):
                     result = practice_chain.invoke({"input": ch_topic})
                     raw    = result.get("answer", "")
                     st.session_state.practice_cache[cache_key] = {
-                        "raw":     raw,
-                        "mcq":     parse_mcq(raw),
-                        "sources": result.get("context", []),
+                        "raw": raw, "mcq": parse_mcq(raw), "sources": result.get("context", [])
                     }
-
-            pdata  = st.session_state.practice_cache[cache_key]
-            mcq    = pdata["mcq"]
+            pdata   = st.session_state.practice_cache[cache_key]
+            mcq     = pdata["mcq"]
             ans_key = f"ans_{ch_idx}"
 
             st.markdown(
                 f"<div class='panel-card'>"
-                f"<div style='font-size:11px;color:#8b949e;margin-bottom:10px'>"
-                f"PRACTICE QUESTION</div>"
-                f"<div style='font-size:14px;color:#3b1a8a;font-weight:500;"
-                f"margin-bottom:14px;line-height:1.5'>{mcq.get('q','')}</div>",
+                f"<div style='font-size:10px;font-weight:800;color:#7c3aed;text-transform:uppercase;"
+                f"letter-spacing:0.08em;margin-bottom:12px'>🎯 Practice Question</div>"
+                f"<div style='font-size:15px;color:#3b1a8a;font-weight:700;"
+                f"margin-bottom:16px;line-height:1.5'>{mcq.get('q','')}</div>",
                 unsafe_allow_html=True,
             )
 
@@ -583,21 +661,15 @@ def main():
                 if answered:
                     correct = mcq.get("answer", "").strip().upper()
                     chosen  = st.session_state.mcq_answered[ans_key]
-                    if opt_letter == correct:
-                        cls = "mcq-option mcq-correct"
-                    elif opt_letter == chosen:
-                        cls = "mcq-option mcq-wrong"
-                    else:
-                        cls = "mcq-option"
+                    cls = ("mcq-option mcq-correct" if opt_letter == correct
+                           else "mcq-option mcq-wrong" if opt_letter == chosen
+                           else "mcq-option")
                     st.markdown(
-                        f"<div class='{cls}'>"
-                        f"<span style='font-weight:600'>{opt_letter})</span> {opt_text}"
-                        f"</div>",
+                        f"<div class='{cls}'><span style='font-weight:700'>{opt_letter})</span> {opt_text}</div>",
                         unsafe_allow_html=True,
                     )
                 else:
-                    if st.button(f"{opt_letter})  {opt_text}",
-                                 key=f"opt_{ch_idx}_{opt_letter}",
+                    if st.button(f"{opt_letter})  {opt_text}", key=f"opt_{ch_idx}_{opt_letter}",
                                  use_container_width=True):
                         st.session_state.mcq_answered[ans_key] = opt_letter
                         st.rerun()
@@ -606,12 +678,15 @@ def main():
                 chosen  = st.session_state.mcq_answered[ans_key]
                 correct = mcq.get("answer", "").strip().upper()
                 if chosen == correct:
-                    st.success(f"✅ Correct! {mcq.get('explanation','')}")
+                    st.session_state.xp += XP_PER_QUESTION
+                    st.markdown(
+                        f"<div class='correct-answer anim-bounce' style='background:#ecfdf5;border:2px solid #10b981;"
+                        f"border-radius:12px;padding:12px 16px;font-weight:700;color:#065f46;margin-bottom:8px'>"
+                        f"🎉 Correct! {mcq.get('explanation','')}"
+                        f"<div class='xp-award'>⚡ +{XP_PER_QUESTION} XP earned!</div></div>",
+                        unsafe_allow_html=True)
                 else:
-                    st.error(
-                        f"❌ Incorrect. Correct answer: **{correct}**\n\n"
-                        f"{mcq.get('explanation','')}"
-                    )
+                    st.error(f"❌ Not quite! Correct answer: **{correct}** — {mcq.get('explanation','')}")
                 st.markdown(
                     f"<div class='badge-row'>{make_source_pills(pdata['sources'])}</div>",
                     unsafe_allow_html=True,
@@ -625,134 +700,122 @@ def main():
                     st.session_state.active_tab = "Lesson"
                     q = f"Explain: {mcq.get('q','')}"
                     st.session_state.messages.append({"role": "user", "content": q})
-                    with st.spinner("Searching textbook..."):
+                    with st.spinner("Searching..."):
                         res = qa_chain.invoke({"input": q})
                     st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": res.get("answer", ""),
+                        "role": "assistant", "content": res.get("answer", ""),
                         "badges": make_source_pills(res.get("context", [])),
                     })
                     st.session_state.q_count += 1
                     st.rerun()
-
             st.markdown("</div>", unsafe_allow_html=True)
 
-        # ── TAB: SUMMARY ──────────────────────────────────────────────────────
+        # SUMMARY
         elif active_tab == "Summary":
             cache_key = f"summary_{ch_idx}"
             if cache_key not in st.session_state.lesson_cache:
-                with st.spinner("Building chapter summary..."):
-                    result = lesson_chain.invoke({
-                        "input": f"key points summary {ch_topic}"
-                    })
+                with st.spinner("📋 Building summary..."):
+                    result = lesson_chain.invoke({"input": f"key points summary {ch_topic}"})
                     st.session_state.lesson_cache[cache_key] = {
-                        "text":    result.get("answer", ""),
-                        "sources": result.get("context", []),
+                        "text": result.get("answer", ""), "sources": result.get("context", [])
                     }
             summary = st.session_state.lesson_cache[cache_key]
             st.markdown(
                 f"<div class='panel-card'>"
-                f"<div style='font-size:11px;color:#8b949e;margin-bottom:10px'>"
-                f"CHAPTER SUMMARY</div>"
+                f"<div style='font-size:10px;font-weight:800;color:#7c3aed;text-transform:uppercase;"
+                f"letter-spacing:0.08em;margin-bottom:12px'>📋 Chapter Summary</div>"
                 f"<div class='lesson-text'>{summary['text']}</div>"
                 f"<div class='badge-row'>{make_source_pills(summary['sources'])}</div>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # RIGHT COLUMN — AI Tutor Chat (persistent, always visible)
-    # ══════════════════════════════════════════════════════════════════════════
+    # ── RIGHT — CHAT ──────────────────────────────────────────────────────────
     with col_right:
-        # Tutor header
         st.markdown(
-            "<div class='tutor-header'>"
-            "<div class='tutor-avatar'>AI</div>"
-            "<div>"
-            "<div style='font-size:13px;font-weight:600;color:#3b1a8a'>LearnIQ Tutor</div>"
-            "<div style='font-size:10px;color:#16a34a;display:flex;align-items:center;gap:4px'>"
-            "<span style='width:6px;height:6px;border-radius:50%;"
-            "background:#16a34a;display:inline-block'></span>Online</div>"
-            "</div></div>",
+            f"<div class='tutor-header'>"
+            f"<div class='tutor-avatar'>AI</div>"
+            f"<div>"
+            f"<div style='font-size:13px;font-weight:900;color:#3b1a8a'>LearnIQ Tutor</div>"
+            f"<div style='font-size:10px;color:#10b981;font-weight:700;display:flex;align-items:center;gap:4px'>"
+            f"<span style='width:6px;height:6px;border-radius:50%;background:#10b981;display:inline-block'></span>Online</div>"
+            f"</div>"
+            f"<div class='lvl-badge'>Lv.{level}</div>"
+            f"</div>",
             unsafe_allow_html=True,
         )
 
-        # Welcome message if no chat
         if not st.session_state.messages:
             st.markdown(
-                "<div class='bubble-bot' style='margin-bottom:10px'>"
-                f"Hi! I'm your LearnIQ tutor. Ask me anything about "
-                f"<b>{ch_info['title']}</b> or any chapter from your textbook."
-                "</div>",
+                f"<div class='bubble-bot' style='margin-bottom:10px'>"
+                f"👋 Hey! Ready to ace <b style='color:#7c3aed'>{ch_info['title']}</b>? "
+                f"Ask me anything — I'm here to help! 🚀"
+                f"</div>",
                 unsafe_allow_html=True,
             )
 
-        # Suggested questions
         suggest_qs = {
-            1:  ["What is irrigation?", "Types of fertilizer?", "What is crop rotation?"],
-            2:  ["What is Lactobacillus?", "How do vaccines work?", "What are pathogens?"],
-            3:  ["What is nylon made of?", "Why avoid plastics?", "What is rayon?"],
-            4:  ["Properties of metals?", "What is corrosion?", "Non-metal examples?"],
-            5:  ["How is coal formed?", "What is petroleum?", "What are fossil fuels?"],
-            6:  ["What is ignition temperature?", "Types of flame?", "How to stop fire?"],
-            7:  ["What is deforestation?", "What is a biosphere reserve?", "Endangered species?"],
-            8:  ["What is a cell?", "Difference: plant vs animal cell?", "What is nucleus?"],
-            9:  ["What is fertilisation?", "Asexual reproduction examples?", "What is a zygote?"],
-            10: ["What is puberty?", "Role of hormones?", "What is adolescence?"],
+            1:  ["What is irrigation? 💧", "Types of fertilizer? 🌱", "Crop rotation? 🔄"],
+            2:  ["What is Lactobacillus? 🦠", "How do vaccines work? 💉", "What are pathogens? 🤒"],
+            3:  ["What is nylon? 🧵", "Why avoid plastics? ♻️", "What is rayon? 🪡"],
+            4:  ["Properties of metals? ⚙️", "What is corrosion? 🔩", "Non-metals? 🧪"],
+            5:  ["How is coal formed? ⛏️", "What is petroleum? 🛢️", "Fossil fuels? 🦕"],
+            6:  ["Ignition temperature? 🌡️", "Types of flame? 🕯️", "Stop a fire? 🧯"],
+            7:  ["What is deforestation? 🌳", "Biosphere reserve? 🌍", "Endangered species? 🐘"],
+            8:  ["What is a cell? 🔬", "Plant vs animal cell? 🌿", "What is nucleus? 🧬"],
+            9:  ["What is fertilisation? 🥚", "Asexual reproduction? 🦎", "What is zygote? 🔬"],
+            10: ["What is puberty? 📏", "Role of hormones? 🧪", "What is adolescence? 🎒"],
         }
-        suggests = suggest_qs.get(ch_idx, ["Ask me anything..."])
+        suggests = suggest_qs.get(ch_idx, ["Ask me anything! 🤔"])
         cols_s = st.columns(len(suggests))
         for i, sq in enumerate(suggests):
             if cols_s[i].button(sq, key=f"sq_{ch_idx}_{i}"):
                 st.session_state.messages.append({"role": "user", "content": sq})
                 st.session_state.q_count += 1
-                with st.spinner("Searching..."):
+                st.session_state.xp += XP_PER_QUESTION
+                with st.spinner("🔍 Searching..."):
                     res = qa_chain.invoke({"input": sq})
                 st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": res.get("answer", ""),
+                    "role": "assistant", "content": res.get("answer", ""),
                     "badges": make_source_pills(res.get("context", [])),
                 })
                 st.rerun()
 
-        # Chat messages
         st.markdown("<div class='chat-wrap'>", unsafe_allow_html=True)
         for msg in st.session_state.messages:
             if msg["role"] == "user":
-                st.markdown(
-                    f'<div class="bubble-user">{msg["content"]}</div>',
-                    unsafe_allow_html=True,
-                )
+                st.markdown(f'<div class="bubble-user">{msg["content"]}</div>', unsafe_allow_html=True)
             else:
+                xp_tag = f'<div class="xp-award">⚡ +{XP_PER_QUESTION} XP earned!</div>'
                 st.markdown(
                     f'<div class="bubble-bot">{msg["content"]}'
-                    f'<div class="badge-row">{msg.get("badges","")}</div></div>',
+                    f'<div class="badge-row">{msg.get("badges","")}</div>'
+                    f'{xp_tag}</div>',
                     unsafe_allow_html=True,
                 )
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # Chat input
         with st.form("chat_form", clear_on_submit=True):
             c1, c2 = st.columns([8, 2])
-            question = c1.text_input(
-                "q", label_visibility="collapsed",
-                placeholder="Ask anything from the textbook...",
-            )
+            question = c1.text_input("q", label_visibility="collapsed",
+                                     placeholder="Ask anything from the textbook...")
             go = c2.form_submit_button("Ask ➤")
 
         if go and question.strip():
             st.session_state.messages.append({"role": "user", "content": question})
             st.session_state.q_count += 1
-            with st.spinner("Searching textbook..."):
+            st.session_state.xp += XP_PER_QUESTION
+            st.markdown("<div class='typing-wrap'><div class='typing-dot'></div>"
+                        "<div class='typing-dot'></div><div class='typing-dot'></div></div>",
+                        unsafe_allow_html=True)
+            with st.spinner("🔍 Searching textbook..."):
                 result = qa_chain.invoke({"input": question})
             st.session_state.messages.append({
-                "role": "assistant",
-                "content": result.get("answer", ""),
+                "role": "assistant", "content": result.get("answer", ""),
                 "badges": make_source_pills(result.get("context", [])),
             })
             st.rerun()
 
-        # Clear chat
         if st.button("🗑️ Clear chat", use_container_width=True):
             st.session_state.messages = []
             st.rerun()
