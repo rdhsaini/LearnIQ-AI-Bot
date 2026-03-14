@@ -9,11 +9,11 @@ from pathlib import Path
 import streamlit as st
 
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_pinecone import PineconeVectorStore
+from langchain.vectorstores import Pinecone as PineconeVectorStore
 from pinecone import Pinecone
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_classic.chains.combine_documents import create_stuff_documents_chain
-from langchain_classic.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.chains import create_retrieval_chain
 
 try:
     from dotenv import load_dotenv
@@ -116,7 +116,9 @@ def build_practice_chain(vectorstore):
 @st.cache_resource(show_spinner=False)
 def load_all_chains(_pinecone_index: str):
     embeddings  = get_embeddings()
-    vectorstore = PineconeVectorStore(index_name=_pinecone_index, embedding=embeddings)
+    import pinecone
+    pinecone.init(api_key=os.getenv('PINECONE_API_KEY',''), environment='us-east-1-aws')
+    vectorstore = PineconeVectorStore.from_existing_index(index_name=_pinecone_index, embedding=embeddings)
     pc        = Pinecone(api_key=os.getenv("PINECONE_API_KEY", ""))
     index     = pc.Index(_pinecone_index)
     stats     = index.describe_index_stats()
