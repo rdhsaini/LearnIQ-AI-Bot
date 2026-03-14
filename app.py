@@ -431,8 +431,8 @@ def main():
     if not OPENAI_API_KEY:
         st.error("**OPENAI_API_KEY not set.** Add to `.env`: `OPENAI_API_KEY=sk-...`")
         st.stop()
-    if not Path(CHROMA_DIR).exists() or not any(Path(CHROMA_DIR).iterdir()):
-        st.error("**Run `python ingest.py` first** to build the knowledge base.")
+    if not PINECONE_API_KEY:
+        st.error("**PINECONE_API_KEY not set.** Add to Streamlit Secrets: `PINECONE_API_KEY=your-key`")
         st.stop()
 
     # ── Load chains ───────────────────────────────────────────────────────────
