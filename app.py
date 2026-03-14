@@ -11,7 +11,6 @@ RUN ORDER:
 import os
 from pathlib import Path
 import streamlit as st
-
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone
