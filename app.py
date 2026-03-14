@@ -9,9 +9,12 @@ from pathlib import Path
 import streamlit as st
 
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.documents import Document
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.output_parsers import StrOutputParser
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -70,41 +73,60 @@ XP_PER_LEVEL    = 100
 def get_embeddings():
     return OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_API_KEY)
 
-def build_qa_chain(vectorstore):
+def pinecone_search(index, embeddings, query, k=5):
+    """Query Pinecone directly — no langchain-pinecone needed."""
+    vec = embeddings.embed_query(query)
+    results = index.query(vector=vec, top_k=k, include_metadata=True)
+    docs = []
+    for match in results.matches:
+        meta = match.metadata or {}
+        page = int(meta.get("page", 0))
+        docs.append(Document(
+            page_content=meta.get("text", ""),
+            metadata={
+                "source": meta.get("source", ""),
+                "page": page,
+                "source_label": meta.get("source_label", f"Textbook · Page {page + 1}"),
+            }
+        ))
+    return docs
+
+
+def build_qa_chain(index, embeddings):
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=OPENAI_API_KEY)
     prompt = ChatPromptTemplate.from_template(
         "You are LearnIQ, a fun and friendly AI tutor for CBSE Grade 8 Science students.\n\n"
         "Use ONLY the context below. Keep answers short, clear and exciting for a 13-year-old.\n"
         "Use emojis occasionally to make it fun! End with — Source: Page [number]\n\n"
-        "If not found: say 'Hmm, I couldn't find that in the textbook. Try rephrasing!'\n\n"
+        "If not found: say \'Hmm, I couldn\'t find that in the textbook. Try rephrasing!\'\n\n"
         "Context:\n{context}\n\nQuestion: {input}\n\nAnswer:"
     )
-    retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 5})
     def chain(inputs):
-        docs = retriever.invoke(inputs["input"])
+        docs = pinecone_search(index, embeddings, inputs["input"], k=5)
         context = "\n\n".join(d.page_content for d in docs)
         answer = llm.invoke(prompt.format_messages(context=context, input=inputs["input"])).content
         return {"answer": answer, "context": docs}
     return chain
 
-def build_lesson_chain(vectorstore):
+
+def build_lesson_chain(index, embeddings):
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=OPENAI_API_KEY)
     prompt = ChatPromptTemplate.from_template(
         "You are a fun textbook summariser for CBSE Grade 8 Science.\n\n"
         "Using ONLY the context below, write a clear lesson for a student. "
         "Use short paragraphs. Bold key terms. Use emojis to make it engaging! "
-        "Keep it under 200 words. End with 'Source: Page X–Y'.\n\n"
+        "Keep it under 200 words. End with \'Source: Page X–Y\'.\n\n"
         "Context:\n{context}\n\nTopic: {input}\n\nLesson summary:"
     )
-    retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 6})
     def chain(inputs):
-        docs = retriever.invoke(inputs["input"])
+        docs = pinecone_search(index, embeddings, inputs["input"], k=6)
         context = "\n\n".join(d.page_content for d in docs)
         answer = llm.invoke(prompt.format_messages(context=context, input=inputs["input"])).content
         return {"answer": answer, "context": docs}
     return chain
 
-def build_practice_chain(vectorstore):
+
+def build_practice_chain(index, embeddings):
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3, openai_api_key=OPENAI_API_KEY)
     prompt = ChatPromptTemplate.from_template(
         "You are a CBSE Grade 8 Science teacher.\n\n"
@@ -114,26 +136,27 @@ def build_practice_chain(vectorstore):
         "Answer: [correct letter]\nExplanation: [one sentence from the textbook]\n\n"
         "Context:\n{context}\n\nTopic: {input}\n\nQuestion:"
     )
-    retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 4})
     def chain(inputs):
-        docs = retriever.invoke(inputs["input"])
+        docs = pinecone_search(index, embeddings, inputs["input"], k=4)
         context = "\n\n".join(d.page_content for d in docs)
         answer = llm.invoke(prompt.format_messages(context=context, input=inputs["input"])).content
         return {"answer": answer, "context": docs}
     return chain
 
+
 @st.cache_resource(show_spinner=False)
 def load_all_chains(_pinecone_index: str):
-    embeddings  = get_embeddings()
-    vectorstore = PineconeVectorStore(
-        index_name=_pinecone_index,
-        embedding=embeddings,
+    embeddings = get_embeddings()
+    pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY", ""))
+    index = pc.Index(_pinecone_index)
+    stats = index.describe_index_stats()
+    doc_count = stats.get("total_vector_count", 0)
+    return (
+        build_qa_chain(index, embeddings),
+        build_lesson_chain(index, embeddings),
+        build_practice_chain(index, embeddings),
+        doc_count,
     )
-    pc = Pinecone(api_key=os.getenv('PINECONE_API_KEY', ''))
-    stats = pc.Index(_pinecone_index).describe_index_stats()
-    doc_count = stats.get('total_vector_count', 0)
-    return (build_qa_chain(vectorstore), build_lesson_chain(vectorstore),
-            build_practice_chain(vectorstore), doc_count)
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 def make_source_pills(source_docs):
